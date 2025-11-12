@@ -4,3 +4,6 @@
 [submodule "meta-ted/recipes-phosphor/sel-logger/phosphor-sel-logger"]
 	path = meta-ted/recipes-phosphor/sel-logger/phosphor-sel-logger
 	url = https://github.com/Alone0506/phosphor-sel-logger.git
+[submodule "meta-ted/recipes-phosphor/interfaces/bmcweb"]
+	path = meta-ted/recipes-phosphor/interfaces/bmcweb
+	url = https://github.com/Alone0506/bmcweb.git
