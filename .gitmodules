@@ -10,3 +10,15 @@
 [submodule "meta-ted/recipes-phosphor/logging/phosphor-logging"]
 	path = meta-ted/recipes-phosphor/logging/phosphor-logging
 	url = https://github.com/Alone0506/phosphor-logging.git
+[submodule "meta-ted/recipes-phosphor/sensors/dbus-sensors"]
+	path = meta-ted/recipes-phosphor/sensors/dbus-sensors
+	url = https://github.com/Alone0506/dbus-sensors.git
+[submodule "meta-ted/recipes-phosphor/sensors/phosphor-hwmon"]
+	path = meta-ted/recipes-phosphor/sensors/phosphor-hwmon
+	url = https://github.com/Alone0506/phosphor-hwmon.git
+[submodule "meta-ted/recipes-phosphor/sensors/phosphor-nvme"]
+	path = meta-ted/recipes-phosphor/sensors/phosphor-nvme
+	url = https://github.com/Alone0506/phosphor-nvme.git
+[submodule "meta-ted/recipes-phosphor/sensors/phosphor-virtual-sensor"]
+	path = meta-ted/recipes-phosphor/sensors/phosphor-virtual-sensor
+	url = https://github.com/openbmc/phosphor-virtual-sensor.git
