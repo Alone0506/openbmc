@@ -1,3 +1,6 @@
 [submodule "meta-ted/recipes-phosphor/ipmi/phosphor-host-ipmid"]
 	path = meta-ted/recipes-phosphor/ipmi/phosphor-host-ipmid
 	url = https://github.com/Alone0506/phosphor-host-ipmid.git
+[submodule "meta-ted/recipes-phosphor/sel-logger/phosphor-sel-logger"]
+	path = meta-ted/recipes-phosphor/sel-logger/phosphor-sel-logger
+	url = https://github.com/Alone0506/phosphor-sel-logger.git
