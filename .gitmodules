@@ -7,3 +7,6 @@
 [submodule "meta-ted/recipes-phosphor/interfaces/bmcweb"]
 	path = meta-ted/recipes-phosphor/interfaces/bmcweb
 	url = https://github.com/Alone0506/bmcweb.git
+[submodule "meta-ted/recipes-phosphor/logging/phosphor-logging"]
+	path = meta-ted/recipes-phosphor/logging/phosphor-logging
+	url = https://github.com/Alone0506/phosphor-logging.git
