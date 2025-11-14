@@ -25,3 +25,6 @@
 [submodule "meta-ted/recipes-kernel/linux/linux-aspeed"]
 	path = meta-ted/recipes-kernel/linux/linux-aspeed
 	url = https://github.com/Alone0506/linux.git
+[submodule "qemu"]
+	path = meta-ted/recipes-devtools/qemu/qemu
+	url = https://github.com/Alone0506/qemu.git
