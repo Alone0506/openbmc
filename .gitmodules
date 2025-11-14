@@ -22,3 +22,6 @@
 [submodule "meta-ted/recipes-phosphor/sensors/phosphor-virtual-sensor"]
 	path = meta-ted/recipes-phosphor/sensors/phosphor-virtual-sensor
 	url = https://github.com/openbmc/phosphor-virtual-sensor.git
+[submodule "meta-ted/recipes-kernel/linux/linux-aspeed"]
+	path = meta-ted/recipes-kernel/linux/linux-aspeed
+	url = https://github.com/Alone0506/linux.git
