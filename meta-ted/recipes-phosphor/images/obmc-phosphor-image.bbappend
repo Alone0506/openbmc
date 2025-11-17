@@ -1,2 +1,5 @@
-OBMC_IMAGE_EXTRA_INSTALL:append:romulus = " ipmitool"
-OBMC_IMAGE_EXTRA_INSTALL:append:romulus = " phosphor-sel-logger"
+OBMC_IMAGE_EXTRA_INSTALL:append:romulus = "\
+                                            ipmitool \
+                                            phosphor-sel-logger \
+                                            entity-manager \
+                                          "
