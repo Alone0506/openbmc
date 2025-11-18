@@ -1,5 +1,7 @@
-OBMC_IMAGE_EXTRA_INSTALL:append:romulus = "\
-                                            ipmitool \
-                                            phosphor-sel-logger \
-                                            entity-manager \
-                                          "
+OBMC_IMAGE_EXTRA_INSTALL:append:evb-ast2600 = " ipmitool"
+OBMC_IMAGE_EXTRA_INSTALL:append:evb-ast2600 = " phosphor-sel-logger"
+OBMC_IMAGE_EXTRA_INSTALL:append:evb-ast2600 = " entity-manager"
+OBMC_IMAGE_EXTRA_INSTALL:append:evb-ast2600 = " fru-device"
+OBMC_IMAGE_EXTRA_INSTALL:append:evb-ast2600 = " dbus-sensors"
+OBMC_IMAGE_EXTRA_INSTALL:append:evb-ast2600 = " phosphor-nvme"
+OBMC_IMAGE_EXTRA_INSTALL:append:evb-ast2600 = " phosphor-virtual-sensor"
