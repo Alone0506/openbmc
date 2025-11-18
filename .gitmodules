@@ -22,9 +22,9 @@
 [submodule "meta-ted/recipes-phosphor/sensors/phosphor-virtual-sensor"]
 	path = meta-ted/recipes-phosphor/sensors/phosphor-virtual-sensor
 	url = https://github.com/openbmc/phosphor-virtual-sensor.git
-[submodule "meta-ted/recipes-phosphor/configuration/entity-manager"]
-	path = meta-ted/recipes-phosphor/configuration/entity-manager
-	url = https://github.com/Alone0506/entity-manager.git
 [submodule "meta-ted/recipes-phosphor/dbus/phosphor-dbus-interfaces"]
 	path = meta-ted/recipes-phosphor/dbus/phosphor-dbus-interfaces
 	url = https://github.com/Alone0506/phosphor-dbus-interfaces.git
+[submodule "meta-ted/recipes-phosphor/configuration/entity-manager"]
+	path = meta-ted/recipes-phosphor/configuration/entity-manager
+	url = https://github.com/Alone0506/entity-manager.git
