@@ -28,6 +28,7 @@
 [submodule "meta-ted/recipes-phosphor/configuration/entity-manager"]
 	path = meta-ted/recipes-phosphor/configuration/entity-manager
 	url = https://github.com/Alone0506/entity-manager.git
+	branch = master
 [submodule "docs"]
 	path = docs
 	url = https://github.com/Alone0506/openbmc.wiki.git
