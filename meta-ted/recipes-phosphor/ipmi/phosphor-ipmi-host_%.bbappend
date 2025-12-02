@@ -8,3 +8,4 @@ S = "${WORKDIR}/phosphor-host-ipmid"
 DEPENDS:append = " ted-yaml-config"
 
 EXTRA_OEMESON = " -Dsensor-yaml-gen=${STAGING_DIR_HOST}${datadir}/ted-yaml-config/ipmi-sensors-static.yaml"
+EXTRA_OEMESON += " -Dinvsensor-yaml-gen=${STAGING_DIR_HOST}${datadir}/ted-yaml-config/ipmi-inventory-sensors.yaml"
