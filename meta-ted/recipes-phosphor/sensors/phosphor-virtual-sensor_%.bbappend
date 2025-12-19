@@ -1,3 +1,4 @@
+LICENSE = "CLOSED"
 FILESEXTRAPATHS:prepend := "${THISDIR}:"
 
 SRC_URI = "file://${BPN}"
