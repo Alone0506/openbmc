@@ -31,3 +31,6 @@
 [submodule "meta-ted/recipes-phosphor/configuration/entity-manager"]
 	path = meta-ted/recipes-phosphor/configuration/entity-manager
 	url = https://github.com/Alone0506/entity-manager.git
+[submodule "meta-ted/recipes-phosphor/sensors/phosphor-ted-sensor"]
+	path = meta-ted/recipes-phosphor/sensors/phosphor-ted-sensor
+	url = https://github.com/Alone0506/phosphor-ted-sensor.git
