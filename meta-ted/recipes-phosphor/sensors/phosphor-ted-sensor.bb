@@ -11,7 +11,7 @@ DEPENDS += "nlohmann-json"
 FILESEXTRAPATHS:prepend := "${THISDIR}:"
 SRC_URI = "file://${BPN}"
 S = "${WORKDIR}/${BPN}"
-SYSTEMD_SERVICE:${PN} = "xyz.openbmc_project.ted.sensor.service"
+SYSTEMD_SERVICE:${PN} = "phosphor-ted-sensor.service"
 
 inherit meson pkgconfig
 inherit systemd
