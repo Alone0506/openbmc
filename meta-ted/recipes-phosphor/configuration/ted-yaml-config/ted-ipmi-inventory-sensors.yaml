@@ -8,3 +8,13 @@
     sensorType: 0x01
     eventReadingType: 0x01
     offset: 0x00
+/xyz/openbmc_project/sensors/temperature/TestSensor:
+    sensorID: 0x03
+    sensorType: 0x01
+    eventReadingType: 0x01
+    offset: 0x00
+/xyz/openbmc_project/sensors/temperature/TestSensor2:
+    sensorID: 0x03
+    sensorType: 0x01
+    eventReadingType: 0x01
+    offset: 0x00
