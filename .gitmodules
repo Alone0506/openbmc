@@ -34,3 +34,6 @@
 [submodule "meta-ted/recipes-phosphor/sensors/phosphor-virtual-sensor"]
 	path = meta-ted/recipes-phosphor/sensors/phosphor-virtual-sensor
 	url = https://github.com/Alone0506/phosphor-virtual-sensor.git
+[submodule "meta-ted/recipes-phosphor/sensors/phosphor-ted-sensor-monitor"]
+	path = meta-ted/recipes-phosphor/sensors/phosphor-ted-sensor-monitor
+	url = https://github.com/Alone0506/phosphor-ted-sensor-monitor.git
