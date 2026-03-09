@@ -1,30 +1,30 @@
 /xyz/openbmc_project/inventory/system:
-    sensorID: 0x01
-    sensorType: 0x12
-    eventReadingType: 0x6F
-    offset: 0x02
+  sensorID: 0x01
+  sensorType: 0x12
+  eventReadingType: 0x6F
+  offset: 0x02
 /xyz/openbmc_project/sensors/temperature/TedTemp:
-    sensorID: 0x02
-    sensorType: 0x01
-    eventReadingType: 0x01
-    offset: 0x00
+  sensorID: 0x02
+  sensorType: 0x01
+  eventReadingType: 0x01
+  offset: 0x00
 /xyz/openbmc_project/sensors/temperature/TedTemp2:
-    sensorID: 0x03
-    sensorType: 0x01
-    eventReadingType: 0x01
-    offset: 0x00
+  sensorID: 0x03
+  sensorType: 0x01
+  eventReadingType: 0x01
+  offset: 0x00
 /xyz/openbmc_project/sensors/temperature/TedVirtualTemp:
-    sensorID: 0x04
-    sensorType: 0x01
-    eventReadingType: 0x01
-    offset: 0x00
+  sensorID: 0x04
+  sensorType: 0x01
+  eventReadingType: 0x01
+  offset: 0x00
 /xyz/openbmc_project/sensors/temperature/TestSensor:
-    sensorID: 0x05
-    sensorType: 0x01
-    eventReadingType: 0x01
-    offset: 0x00
+  sensorID: 0x05
+  sensorType: 0x01
+  eventReadingType: 0x01
+  offset: 0x00
 /xyz/openbmc_project/sensors/temperature/TestSensor2:
-    sensorID: 0x06
-    sensorType: 0x01
-    eventReadingType: 0x01
-    offset: 0x00
+  sensorID: 0x06
+  sensorType: 0x01
+  eventReadingType: 0x01
+  offset: 0x00
