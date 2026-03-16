@@ -4,7 +4,7 @@
   sensorType: 0x01
   multiplierM: 4
   mutability: Mutability::Read
-  path: /xyz/openbmc_project/sensors/temperature/TedTemp
+  path: /xyz/openbmc_project/sensors/temperature/ExternalTemp1
   rExp: -1
   readingType: readingData
   sensorNamePattern: nameLeaf
@@ -23,7 +23,7 @@
   sensorType: 0x01
   multiplierM: 4
   mutability: Mutability::Read
-  path: /xyz/openbmc_project/sensors/temperature/TedTemp2
+  path: /xyz/openbmc_project/sensors/temperature/ExternalTemp2
   rExp: -1
   readingType: readingData
   sensorNamePattern: nameLeaf
@@ -36,13 +36,13 @@
         Offsets:
           255:
             type: double
-0x04:
+0x10:
   entityID: 55
   entityInstance: 1
   sensorType: 0x01
   multiplierM: 4
   mutability: Mutability::Read
-  path: /xyz/openbmc_project/sensors/temperature/TedVirtualTemp
+  path: /xyz/openbmc_project/sensors/temperature/VirtualTemp1
   rExp: -1
   readingType: readingData
   sensorNamePattern: nameLeaf
@@ -55,13 +55,13 @@
         Offsets:
           255:
             type: double
-0x05:
+0x11:
   entityID: 55
   entityInstance: 1
   sensorType: 0x01
   multiplierM: 4
   mutability: Mutability::Read
-  path: /xyz/openbmc_project/sensors/temperature/TestSensor
+  path: /xyz/openbmc_project/sensors/temperature/VirtualTemp2
   rExp: -1
   readingType: readingData
   sensorNamePattern: nameLeaf
@@ -74,13 +74,52 @@
         Offsets:
           255:
             type: double
-0x06:
+0x20:
   entityID: 55
   entityInstance: 1
   sensorType: 0x01
   multiplierM: 4
   mutability: Mutability::Read
-  path: /xyz/openbmc_project/sensors/temperature/TestSensor2
+  path: /xyz/openbmc_project/sensors/temperature/TedSensor1
+  rExp: -1
+  readingType: readingData
+  sensorNamePattern: nameLeaf
+  sensorReadingType: 1
+  serviceInterface: org.freedesktop.DBus.Properties
+  unit: xyz.openbmc_project.Sensor.Value.Unit.DegreesC
+  interfaces:
+    xyz.openbmc_project.Sensor.Value:
+      Value:
+        Offsets:
+          255:
+            type: double
+0x21:
+  entityID: 55
+  entityInstance: 1
+  sensorType: 0x01
+  multiplierM: 4
+  mutability: Mutability::Read
+  path: /xyz/openbmc_project/sensors/temperature/TedSensor2
+  sensorName: RenameSensor
+  rExp: -1
+  readingType: readingData
+  sensorNamePattern: nameLeaf
+  sensorReadingType: 1
+  serviceInterface: org.freedesktop.DBus.Properties
+  unit: xyz.openbmc_project.Sensor.Value.Unit.DegreesC
+  interfaces:
+    xyz.openbmc_project.Sensor.Value:
+      Value:
+        Offsets:
+          255:
+            type: double
+0x22:
+  entityID: 55
+  entityInstance: 1
+  sensorType: 0x01
+  multiplierM: 4
+  mutability: Mutability::Read
+  path: /xyz/openbmc_project/sensors/temperature/FakeSensor
   rExp: -1
   readingType: readingData
   sensorNamePattern: nameLeaf
