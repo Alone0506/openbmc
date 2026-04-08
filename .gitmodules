@@ -40,3 +40,6 @@
 [submodule "meta-ted/recipes-phosphor/fans/phosphor-pid-control"]
 	path = meta-ted/recipes-phosphor/fans/phosphor-pid-control
 	url = https://github.com/Alone0506/phosphor-pid-control.git
+[submodule "meta-ted/recipes-phosphor/sensors/phosphor-ted-dbus-interface"]
+	path = meta-ted/recipes-phosphor/sensors/phosphor-ted-dbus-interface
+	url = https://github.com/Alone0506/phosphor-ted-dbus-interface.git
