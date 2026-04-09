@@ -10,7 +10,7 @@ DEPENDS += "nlohmann-json"
 
 FILESEXTRAPATHS:prepend := "${THISDIR}:"
 SRC_URI = "file://${BPN}"
-S = "${WORKDIR}/${BPN}"
+S = "${UNPACKDIR}/${BPN}"
 SYSTEMD_SERVICE:${PN} = "phosphor-ted-sensor.service"
 
 inherit meson pkgconfig

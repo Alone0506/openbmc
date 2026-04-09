@@ -8,7 +8,7 @@ DEPENDS += "phosphor-logging"
 
 FILESEXTRAPATHS:prepend := "${THISDIR}:"
 SRC_URI = "file://${BPN}"
-S = "${WORKDIR}/${BPN}"
+S = "${UNPACKDIR}/${BPN}"
 SYSTEMD_SERVICE:${PN} = "phosphor-ted-dbus-interface.service"
 
 inherit meson pkgconfig

@@ -6,8 +6,7 @@ inherit allarch
 SRC_URI = " file://ted-ipmi-sensors-static.yaml"
 SRC_URI += "file://ted-ipmi-inventory-sensors.yaml"
 
-S = "${WORKDIR}/sources"
-UNPACKDIR = "${S}"
+S = "${UNPACKDIR}"
 
 do_install() {
     install -m 0644 -D ted-ipmi-sensors-static.yaml \

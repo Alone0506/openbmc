@@ -1,5 +1,5 @@
 #!/bin/bash
-build/tmp/work/x86_64-linux/qemu-system-native/10.0.0/build/qemu-system-arm \
+build/tmp/work/x86_64-linux/qemu-system-native/10.2.0/build/qemu-system-arm \
     -m 1G \
     -M ast2600-evb \
     -nographic \
