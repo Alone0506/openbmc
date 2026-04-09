@@ -8,7 +8,7 @@ DEPENDS = " \
     sdbusplus \
     "
 
-SRCREV = "1f1d00458df8a375538de5f103c0566ae8a0159b"
+SRCREV = "80a1d08bc38c01cf36523fb982e1c26a6a9f1d3b"
 
 PACKAGECONFIG ??= " \
     modbus-rtu \
@@ -22,7 +22,6 @@ SRC_URI = "git://github.com/openbmc/phosphor-modbus.git;branch=main;protocol=htt
 SYSTEMD_SERVICE:${PN} += "${@bb.utils.contains('PACKAGECONFIG', 'modbus-rtu', \
                                                'xyz.openbmc_project.ModbusRTU.service', \
                                                '', d)}"
-S = "${WORKDIR}/git"
 
 inherit pkgconfig meson systemd
 

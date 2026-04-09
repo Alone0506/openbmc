@@ -5,9 +5,8 @@ LICENSE = "Apache-2.0"
 LIC_FILES_CHKSUM = "file://LICENSE;md5=9e69ba356fa59848ffd865152a3ccc13"
 
 SRC_URI = "git://github.com/openbmc/fb-ipmi-oem;branch=master;protocol=https"
-SRCREV = "cbb2ac98f69d6602c9bc07c6546b9d9823c85ba7"
+SRCREV = "dd89bbca1b08d6a2177a32b20e62bebb036e33c9"
 
-S = "${WORKDIR}/git"
 PV = "0.1+git${SRCPV}"
 
 DEPENDS = "boost phosphor-ipmi-host phosphor-logging systemd "

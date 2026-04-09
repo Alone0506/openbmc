@@ -17,13 +17,12 @@ DEPENDS += "cli11"
 DEPENDS += "boost"
 # We depend on this to be built first so we can build our providers.
 DEPENDS += "phosphor-ipmi-host"
-SRCREV = "11a1edcd204b87c6258592dc47f3d04e426e66e8"
+SRCREV = "8da69bbc53ed3dc9b346cdc43bf5018de8510932"
 PV = "0.1+git${SRCPV}"
 PR = "r1"
 
 SRC_URI = "git://github.com/openbmc/phosphor-pid-control;branch=master;protocol=https"
 
-S = "${WORKDIR}/git"
 SERVICE_FILE = "phosphor-pid-control.service"
 SYSTEMD_PACKAGES = "${PN}"
 SYSTEMD_SERVICE:${PN} = "${SERVICE_FILE}"

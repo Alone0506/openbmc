@@ -11,9 +11,7 @@ DEPENDS = " \
     systemd \
 "
 
-S = "${WORKDIR}/git"
-
-SRCREV = "70afaf6120da17019810bcd287f699c943e1575f"
+SRCREV = "346bac865c76f1e059391d25cfc8d50ec28dbda9"
 
 SRC_URI += "git://github.com/openbmc/platform-init.git;branch=master;protocol=https;branch=main"
 
