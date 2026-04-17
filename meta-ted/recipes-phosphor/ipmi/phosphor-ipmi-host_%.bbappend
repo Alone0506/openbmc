@@ -7,7 +7,7 @@ S = "${UNPACKDIR}/phosphor-host-ipmid"
 
 DEPENDS:append = " ted-yaml-config"
 
-PACKAGECONFIG:append = " sensors-cache"
+# PACKAGECONFIG:append = " sensors-cache"
 
 EXTRA_OEMESON = " -Dsensor-yaml-gen=${STAGING_DIR_HOST}${datadir}/ted-yaml-config/ipmi-sensors-static.yaml"
 EXTRA_OEMESON += " -Dinvsensor-yaml-gen=${STAGING_DIR_HOST}${datadir}/ted-yaml-config/ipmi-inventory-sensors.yaml"
