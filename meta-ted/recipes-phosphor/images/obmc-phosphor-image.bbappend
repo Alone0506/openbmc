@@ -1,3 +1,8 @@
+# busctl completion
+OBMC_IMAGE_EXTRA_INSTALL:append:evb-ast2600 = " bash"
+OBMC_IMAGE_EXTRA_INSTALL:append:evb-ast2600 = " bash-completion"
+OBMC_IMAGE_EXTRA_INSTALL:append:evb-ast2600 = " systemd-bash-completion"
+
 OBMC_IMAGE_EXTRA_INSTALL:append:evb-ast2600 = " dbus-sensors"
 OBMC_IMAGE_EXTRA_INSTALL:append:evb-ast2600 = " dbus-tools"
 OBMC_IMAGE_EXTRA_INSTALL:append:evb-ast2600 = " entity-manager"
