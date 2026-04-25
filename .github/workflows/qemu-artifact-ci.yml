@@ -1,0 +1,354 @@
+name: QEMU Artifact CI
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  MTD_SOURCE_PATH: build/tmp/deploy/images/evb-ast2600/obmc-phosphor-image-evb-ast2600.static.mtd
+  QEMU_SOURCE_PATH: build/tmp/work/x86_64-linux/qemu-system-native/10.2.0/build/qemu-system-arm
+  MTD_ARTIFACT_NAME: evb-ast2600-static-mtd
+  QEMU_ARTIFACT_NAME: qemu-system-arm-native
+  TEST_AUTOMATION_REPO: https://github.com/Alone0506/openbmc-test-automation.git
+  OPENBMC_HOST: 127.0.0.1
+  OPENBMC_USERNAME: root
+  OPENBMC_PASSWORD: 0penBmc
+  IPMI_USERNAME: root
+  IPMI_PASSWORD: 0penBmc
+  SSH_PORT: "2222"
+  HTTPS_PORT: "2443"
+  IPMI_PORT: "2623"
+  QEMU_MACHINE: ast2600-evb
+  CI_LOG_DIR: ci-artifacts
+  ROBOT_OUTPUT_DIR: ci-artifacts/robot
+  QEMU_LOG_FILE: ci-artifacts/qemu-console.log
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: Upload QEMU inputs
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify required build outputs exist
+        run: |
+          set -euo pipefail
+
+          for required_file in "$MTD_SOURCE_PATH" "$QEMU_SOURCE_PATH"; do
+            if [[ ! -f "$required_file" ]]; then
+              echo "Missing required build output: $required_file" >&2
+              exit 1
+            fi
+          done
+
+          ls -lh "$MTD_SOURCE_PATH" "$QEMU_SOURCE_PATH"
+
+      - name: Upload static MTD artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.MTD_ARTIFACT_NAME }}
+          path: ${{ env.MTD_SOURCE_PATH }}
+          if-no-files-found: error
+
+      - name: Upload qemu-system-arm artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.QEMU_ARTIFACT_NAME }}
+          path: ${{ env.QEMU_SOURCE_PATH }}
+          if-no-files-found: error
+
+  test:
+    name: Boot QEMU and run QEMU_CI
+    needs: build
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download static MTD artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.MTD_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/downloaded-artifacts/mtd
+
+      - name: Download qemu-system-arm artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.QEMU_ARTIFACT_NAME }}
+          path: ${{ runner.temp }}/downloaded-artifacts/qemu
+
+      - name: Install runtime dependencies
+        run: |
+          set -euo pipefail
+
+          sudo_prefix=()
+          if command -v sudo >/dev/null 2>&1 && [[ "$(id -u)" -ne 0 ]]; then
+            sudo_prefix=(sudo)
+          fi
+
+          if command -v apt-get >/dev/null 2>&1; then
+            "${sudo_prefix[@]}" apt-get update
+            DEBIAN_FRONTEND=noninteractive "${sudo_prefix[@]}" apt-get install -y \
+              ca-certificates \
+              curl \
+              expect \
+              git \
+              ipmitool \
+              openssh-client \
+              python3 \
+              python3-pip \
+              python3-venv \
+              qemu-system-arm
+          elif command -v dnf >/dev/null 2>&1; then
+            "${sudo_prefix[@]}" dnf install -y \
+              ca-certificates \
+              curl \
+              expect \
+              git \
+              ipmitool \
+              openssh-clients \
+              python3 \
+              python3-pip \
+              python3-virtualenv \
+              qemu-system-arm
+          elif command -v yum >/dev/null 2>&1; then
+            "${sudo_prefix[@]}" yum install -y \
+              ca-certificates \
+              curl \
+              expect \
+              git \
+              ipmitool \
+              openssh-clients \
+              python3 \
+              python3-pip \
+              python3-virtualenv \
+              qemu-system-arm
+          else
+            echo "Unsupported package manager. Install qemu-system-arm, ipmitool, expect, curl, git, and Python tooling on the runner." >&2
+            exit 1
+          fi
+
+      - name: Prepare downloaded artifacts and log directories
+        run: |
+          set -euo pipefail
+
+          mtd_file=$(find "$RUNNER_TEMP/downloaded-artifacts/mtd" -type f -name '*.mtd' -print -quit)
+          qemu_file=$(find "$RUNNER_TEMP/downloaded-artifacts/qemu" -type f -name 'qemu-system-arm' -print -quit)
+
+          if [[ -z "$mtd_file" || -z "$qemu_file" ]]; then
+            echo "Failed to locate downloaded artifacts." >&2
+            exit 1
+          fi
+
+          chmod +x "$qemu_file"
+          mkdir -p "$GITHUB_WORKSPACE/$ROBOT_OUTPUT_DIR"
+          : > "$GITHUB_WORKSPACE/$QEMU_LOG_FILE"
+
+          {
+            printf 'MTD_FILE=%s\n' "$mtd_file"
+            printf 'QEMU_FILE=%s\n' "$qemu_file"
+            printf 'TEST_AUTOMATION_DIR=%s\n' "$RUNNER_TEMP/openbmc-test-automation"
+          } >> "$GITHUB_ENV"
+
+      - name: Smoke check downloaded QEMU
+        run: |
+          set -euo pipefail
+          "$QEMU_FILE" --version
+
+      - name: Clone test automation repository
+        run: |
+          set -euo pipefail
+
+          rm -rf "$TEST_AUTOMATION_DIR"
+          git clone --depth 1 "$TEST_AUTOMATION_REPO" "$TEST_AUTOMATION_DIR"
+
+          cat > "$TEST_AUTOMATION_DIR/ci-env.py" <<'EOF'
+          OPENBMC_HOST = "127.0.0.1"
+          SSH_PORT = "2222"
+          HTTPS_PORT = "2443"
+          IPMI_PORT = "2623"
+          OPENBMC_USERNAME = "root"
+          OPENBMC_PASSWORD = "0penBmc"
+          IPMI_USERNAME = "root"
+          IPMI_PASSWORD = "0penBmc"
+          IPMI_COMMAND = "External"
+          PLATFORM_ARCH_TYPE = "x86"
+          EOF
+
+      - name: Install Python requirements for Robot tests
+        working-directory: ${{ runner.temp }}/openbmc-test-automation
+        run: |
+          set -euo pipefail
+
+          python3 -m venv .venv
+          source .venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Start downloaded QEMU in background
+        run: |
+          set -euo pipefail
+
+          nohup "$QEMU_FILE" \
+            -m 1G \
+            -M "$QEMU_MACHINE" \
+            -nographic \
+            -drive "file=$MTD_FILE,format=raw,if=mtd" \
+            -net nic \
+            -net "user,hostfwd=:127.0.0.1:${SSH_PORT}-:22,hostfwd=:127.0.0.1:${HTTPS_PORT}-:443,hostfwd=udp:127.0.0.1:${IPMI_PORT}-:623,hostname=qemu" \
+            > "$GITHUB_WORKSPACE/$QEMU_LOG_FILE" 2>&1 &
+
+          echo $! > "$RUNNER_TEMP/qemu.pid"
+          sleep 5
+
+          if ! kill -0 "$(cat "$RUNNER_TEMP/qemu.pid")" 2>/dev/null; then
+            echo "QEMU exited immediately after launch." >&2
+            tail -n 200 "$GITHUB_WORKSPACE/$QEMU_LOG_FILE" || true
+            exit 1
+          fi
+
+      - name: Wait for Redfish readiness with SSH fallback
+        run: |
+          set -euo pipefail
+
+          redfish_url="https://${OPENBMC_HOST}:${HTTPS_PORT}/redfish/v1/"
+          ssh_ready=0
+          deadline=$((SECONDS + 900))
+
+          while (( SECONDS < deadline )); do
+            if curl --silent --show-error --fail --insecure --max-time 10 "$redfish_url" \
+              > "$GITHUB_WORKSPACE/$CI_LOG_DIR/redfish-v1.json"; then
+              echo "Redfish readiness confirmed at $redfish_url"
+              exit 0
+            fi
+
+            if (( ssh_ready == 0 )) && expect <<'EOF'
+            log_user 0
+            set timeout 20
+            set host $env(OPENBMC_HOST)
+            set port $env(SSH_PORT)
+            set user $env(OPENBMC_USERNAME)
+            set password $env(OPENBMC_PASSWORD)
+            spawn ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o PreferredAuthentications=password -p $port $user@$host "echo ssh-ready"
+            expect {
+              -re "assword:" {
+                send "$password\r"
+                exp_continue
+              }
+              "ssh-ready" {
+                exit 0
+              }
+              timeout {
+                exit 1
+              }
+              eof {
+                catch wait result
+                exit [lindex $result 3]
+              }
+            }
+            EOF
+            then
+              ssh_ready=1
+              echo "SSH fallback succeeded on ${OPENBMC_HOST}:${SSH_PORT}."
+            fi
+
+            if ! kill -0 "$(cat "$RUNNER_TEMP/qemu.pid")" 2>/dev/null; then
+              echo "QEMU exited before Redfish became ready." >&2
+              tail -n 200 "$GITHUB_WORKSPACE/$QEMU_LOG_FILE" || true
+              exit 1
+            fi
+
+            sleep 10
+          done
+
+          echo "Timed out waiting for $redfish_url" >&2
+          exit 1
+
+      - name: Run QEMU_CI Robot bucket
+        working-directory: ${{ runner.temp }}/openbmc-test-automation
+        run: |
+          set -euo pipefail
+
+          source .venv/bin/activate
+          export PATH="$PWD/bin:$PATH"
+          export PYTHONPATH="$PWD/lib${PYTHONPATH:+:$PYTHONPATH}"
+
+          robot \
+            --outputdir "$GITHUB_WORKSPACE/$ROBOT_OUTPUT_DIR" \
+            -V ci-env.py \
+            -A test_lists/QEMU_CI \
+            redfish/ \
+            ipmi/
+
+      - name: Ensure log bundle exists
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p "$GITHUB_WORKSPACE/$ROBOT_OUTPUT_DIR"
+
+          if [[ ! -f "$GITHUB_WORKSPACE/$QEMU_LOG_FILE" ]]; then
+            : > "$GITHUB_WORKSPACE/$QEMU_LOG_FILE"
+          fi
+
+          for robot_file in log.html report.html output.xml; do
+            if [[ ! -f "$GITHUB_WORKSPACE/$ROBOT_OUTPUT_DIR/$robot_file" ]]; then
+              : > "$GITHUB_WORKSPACE/$ROBOT_OUTPUT_DIR/$robot_file"
+            fi
+          done
+
+      - name: Upload QEMU and Robot logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-test-logs
+          path: |
+            ${{ github.workspace }}/ci-artifacts/qemu-console.log
+            ${{ github.workspace }}/ci-artifacts/robot/log.html
+            ${{ github.workspace }}/ci-artifacts/robot/report.html
+            ${{ github.workspace }}/ci-artifacts/robot/output.xml
+          if-no-files-found: warn
+
+      - name: Stop background QEMU
+        if: ${{ always() }}
+        run: |
+          set +e
+
+          if [[ ! -f "$RUNNER_TEMP/qemu.pid" ]]; then
+            exit 0
+          fi
+
+          qemu_pid=$(cat "$RUNNER_TEMP/qemu.pid")
+
+          if ! kill -0 "$qemu_pid" 2>/dev/null; then
+            exit 0
+          fi
+
+          kill "$qemu_pid" 2>/dev/null || true
+
+          for _ in $(seq 1 30); do
+            if ! kill -0 "$qemu_pid" 2>/dev/null; then
+              exit 0
+            fi
+
+            sleep 1
+          done
+
+          kill -9 "$qemu_pid" 2>/dev/null || true
