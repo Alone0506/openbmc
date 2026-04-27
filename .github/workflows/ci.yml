@@ -52,7 +52,7 @@ jobs:
       - name: Launch AST2600 EVB in QEMU
         run: |
           set -euxo pipefail
-          nohup qemu-system-arm \
+          nohup ./qemu-system-arm \
             -m 1G \
             -M ast2600-evb \
             -nographic \
@@ -68,9 +68,9 @@ jobs:
           set -euxo pipefail
           git clone "$OPENBMC_TEST_REPO"
           cd "$OPENBMC_TEST_DIR"
-          python -m pip install --upgrade pip
           python3 -m venv .venv
           . .venv/bin/activate
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Wait for SSH available after QEMU boot
