@@ -32,7 +32,7 @@ jobs:
         run: |
           echo "Workspace: $GITHUB_WORKSPACE"
           ls -al
-          cd "$GITHUB_WORKSPACE/build"
+          cd "$GITHUB_WORKSPACE/build/tmp/deploy/images/evb-ast2600"
           ls -al
           set -euo pipefail
           if [[ ! -f "$OPENBMC_IMAGE" ]]; then
