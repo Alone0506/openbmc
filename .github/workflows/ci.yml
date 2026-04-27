@@ -14,6 +14,7 @@ jobs:
 
     env:
       OPENBMC_IMAGE: https://github.com/Alone0506/openbmc/releases/download/CI_Test/obmc-phosphor-image-evb-ast2600.static.mtd
+      QEMU_IMAGE: https://github.com/Alone0506/openbmc/releases/download/CI_Test/qemu-system-arm
       OPENBMC_TEST_REPO: https://github.com/Alone0506/openbmc-test-automation.git
       OPENBMC_TEST_DIR: openbmc-test-automation
       OPENBMC_HOST: 127.0.0.1
@@ -28,13 +29,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Validate QEMU image exists
+      - name: Download QEMU and OpenBMC image
         run: |
-          curl -L -o image.mtd $OPENBMC_IMAGE
           set -euo pipefail
+          curl -L -o image.mtd $OPENBMC_IMAGE
           if [[ ! -f image.mtd ]]; then
             ls -al
             echo "Missing image: image.mtd"
+            exit 1
+          fi
+          curl -L -o qemu-system-arm $QEMU_IMAGE
+          if [[ ! -f qemu-system-arm ]]; then
+            ls -al
+            echo "Missing QEMU image: qemu-system-arm"
             exit 1
           fi
 
@@ -43,7 +50,6 @@ jobs:
           set -euxo pipefail
           sudo apt-get update
           sudo apt-get install -y \
-            qemu-system-arm \
             openssh-client \
             sshpass \
             ipmitool \
@@ -64,29 +70,6 @@ jobs:
           echo "QEMU_PID=$!" >> "$GITHUB_ENV"
           echo "QEMU launched with PID $!"
 
-      - name: Wait for SSH after boot
-        run: |
-          set -euo pipefail
-          for attempt in $(seq 1 60); do
-            if sshpass -p "$OPENBMC_PASSWORD" ssh \
-              -o StrictHostKeyChecking=no \
-              -o UserKnownHostsFile=/dev/null \
-              -o ConnectTimeout=5 \
-              -p "$SSH_PORT" \
-              "${OPENBMC_USERNAME}@${OPENBMC_HOST}" \
-              'uname -a' >/tmp/openbmc-ssh-boot.txt 2>&1; then
-              cat /tmp/openbmc-ssh-boot.txt
-              exit 0
-            fi
-
-            echo "SSH not ready yet (attempt ${attempt}/60)"
-            sleep 10
-          done
-
-          echo "Timed out waiting for SSH after boot."
-          tail -n 200 "$QEMU_LOG" || true
-          exit 1
-
       - name: Clone test automation and install Python requirements
         run: |
           set -euxo pipefail
@@ -97,7 +80,7 @@ jobs:
           . .venv/bin/activate
           pip install -r requirements.txt
 
-      - name: Wait for SSH again before Robot
+      - name: Wait for SSH available after QEMU boot
         run: |
           set -euo pipefail
           for attempt in $(seq 1 30); do
