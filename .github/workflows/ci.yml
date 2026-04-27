@@ -31,7 +31,7 @@ jobs:
       - name: Validate QEMU image exists
         run: |
           echo "Workspace: $GITHUB_WORKSPACE"
-          ls -al
+          ls /build/tmp/deploy/images/evb-ast2600/ || true
           set -euo pipefail
           if [[ ! -f "$OPENBMC_IMAGE" ]]; then
             echo "Missing image: $OPENBMC_IMAGE"
