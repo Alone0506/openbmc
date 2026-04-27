@@ -7,7 +7,7 @@ on:
 jobs:
   qemu-setup:
     name: Boot AST2600 and run setup robot
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
       contents: read
@@ -52,7 +52,7 @@ jobs:
       - name: Launch AST2600 EVB in QEMU
         run: |
           set -euxo pipefail
-          nohup ./qemu-system-arm \
+          nohup qemu-system-arm \
             -m 1G \
             -M ast2600-evb \
             -nographic \
