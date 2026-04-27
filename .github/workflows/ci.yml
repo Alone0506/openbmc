@@ -13,7 +13,7 @@ jobs:
       contents: read
 
     env:
-      OPENBMC_IMAGE: $GITHUB_WORKSPACE/build/tmp/deploy/images/evb-ast2600/obmc-phosphor-image-evb-ast2600.static.mtd
+      OPENBMC_IMAGE: https://github.com/Alone0506/openbmc/releases/download/CI_Test/obmc-phosphor-image-evb-ast2600.static.mtd
       OPENBMC_TEST_REPO: https://github.com/Alone0506/openbmc-test-automation.git
       OPENBMC_TEST_DIR: openbmc-test-automation
       OPENBMC_HOST: 127.0.0.1
@@ -32,11 +32,11 @@ jobs:
         run: |
           echo "Workspace: $GITHUB_WORKSPACE"
           ls -al
-          cd "$GITHUB_WORKSPACE/build/tmp/deploy/images/evb-ast2600"
+          curl -L -o image.mtd OPENBMC_IMAGE
           ls -al
           set -euo pipefail
-          if [[ ! -f "$OPENBMC_IMAGE" ]]; then
-            echo "Missing image: $OPENBMC_IMAGE"
+          if [[ ! -f image.mtd ]]; then
+            echo "Missing image: image.mtd"
             exit 1
           fi
 
@@ -94,9 +94,9 @@ jobs:
           set -euxo pipefail
           git clone "$OPENBMC_TEST_REPO"
           cd "$OPENBMC_TEST_DIR"
+          python -m pip install --upgrade pip
           python3 -m venv .venv
           . .venv/bin/activate
-          python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Wait for SSH again before Robot
