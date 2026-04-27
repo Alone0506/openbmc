@@ -30,12 +30,10 @@ jobs:
 
       - name: Validate QEMU image exists
         run: |
-          echo "Workspace: $GITHUB_WORKSPACE"
-          ls -al
           curl -L -o image.mtd $OPENBMC_IMAGE
-          ls -al
           set -euo pipefail
           if [[ ! -f image.mtd ]]; then
+            ls -al
             echo "Missing image: image.mtd"
             exit 1
           fi
@@ -59,7 +57,7 @@ jobs:
             -m 1G \
             -M ast2600-evb \
             -nographic \
-            -drive file="$OPENBMC_IMAGE",format=raw,if=mtd \
+            -drive file=image.mtd,format=raw,if=mtd \
             -net nic \
             -net user,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22,hostfwd=tcp:127.0.0.1:${HTTPS_PORT}-:443,hostfwd=udp:127.0.0.1:${IPMI_PORT}-:623,hostname=qemu \
             >"$QEMU_LOG" 2>&1 &
