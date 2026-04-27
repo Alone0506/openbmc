@@ -33,17 +33,10 @@ jobs:
         run: |
           set -euo pipefail
           curl -L -o image.mtd $OPENBMC_IMAGE
-          if [[ ! -f image.mtd ]]; then
-            ls -al
-            echo "Missing image: image.mtd"
-            exit 1
-          fi
           curl -L -o qemu-system-arm $QEMU_IMAGE
-          if [[ ! -f qemu-system-arm ]]; then
-            ls -al
-            echo "Missing QEMU image: qemu-system-arm"
-            exit 1
-          fi
+          chmod +x qemu-system-arm
+          file qemu-system-arm
+          ls -l qemu-system-arm image.mtd
 
       - name: Install host dependencies
         run: |
