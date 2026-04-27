@@ -13,7 +13,7 @@ jobs:
       contents: read
 
     env:
-      OPENBMC_IMAGE: build/tmp/deploy/images/evb-ast2600/obmc-phosphor-image-evb-ast2600.static.mtd
+      OPENBMC_IMAGE: $GITHUB_WORKSPACE/build/tmp/deploy/images/evb-ast2600/obmc-phosphor-image-evb-ast2600.static.mtd
       OPENBMC_TEST_REPO: https://github.com/Alone0506/openbmc-test-automation.git
       OPENBMC_TEST_DIR: openbmc-test-automation
       OPENBMC_HOST: 127.0.0.1
@@ -30,6 +30,8 @@ jobs:
 
       - name: Validate QEMU image exists
         run: |
+          echo "Workspace: $GITHUB_WORKSPACE"
+          ls -al
           set -euo pipefail
           if [[ ! -f "$OPENBMC_IMAGE" ]]; then
             echo "Missing image: $OPENBMC_IMAGE"
