@@ -32,7 +32,7 @@ jobs:
         run: |
           echo "Workspace: $GITHUB_WORKSPACE"
           ls -al
-          curl -L -o image.mtd OPENBMC_IMAGE
+          curl -L -o image.mtd $OPENBMC_IMAGE
           ls -al
           set -euo pipefail
           if [[ ! -f image.mtd ]]; then
