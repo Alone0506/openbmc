@@ -4,7 +4,6 @@ on: [push, workflow_dispatch]
 
 jobs:
   qemu-setup:
-    name: Boot AST2600 and run setup robot
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     permissions:
@@ -67,13 +66,16 @@ jobs:
           for i in {1..30}; do
             sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no \
               -p $SSH_PORT $USER@$HOST true && exit 0
+            echo "SSH not ready yet (attempt ${i}/30)"
             sleep 10
           done
           tail -200 "$QEMU_LOG"
           exit 1
 
       - name: Run Robot
-        run: tests/.venv/bin/robot -V tests/env.py tests/templates/test_openbmc_setup.robot
+        run: |
+          . test/.venv/bin/activate
+          robot -V env.py templates/test_openbmc_setup.robot
 
       - name: Cleanup
         if: always()
