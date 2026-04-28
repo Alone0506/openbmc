@@ -47,7 +47,11 @@ jobs:
           -nographic
           -drive file=image.mtd,format=raw,if=mtd
           -net nic
-          -net user,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22
+          -net user,
+          hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22,
+          hostfwd=tcp:127.0.0.1:${HTTPS_PORT}-:443,
+          hostfwd=udp:127.0.0.1:${IPMI_PORT}-:623,
+          hostname=qemu
           >"$QEMU_LOG" 2>&1 &
           echo "QEMU_PID=$!" >> $GITHUB_ENV
 
