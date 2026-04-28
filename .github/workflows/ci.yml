@@ -15,6 +15,8 @@ jobs:
       USER: root
       PASS: 0penBmc
       SSH_PORT: 2222
+      HTTPS_PORT: 2443
+      IPMI_PORT: 2623
       QEMU_LOG: ${{ github.workspace }}/qemu.log
 
     defaults:
