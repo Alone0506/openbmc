@@ -65,7 +65,9 @@ jobs:
       - name: Wait QEMU SSH work
         run: |
           for i in {1..30}; do
-            sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no \
+            sshpass -p "$PASS" ssh \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
               -p $SSH_PORT $USER@$HOST true && exit 0
             echo "SSH not ready yet (attempt ${i}/30)"
             sleep 10
