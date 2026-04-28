@@ -1,8 +1,6 @@
 name: QEMU AST2600 Setup CI
 
-on:
-  push:
-  workflow_dispatch:
+on: [push, workflow_dispatch]
 
 jobs:
   qemu-setup:
@@ -13,30 +11,26 @@ jobs:
       contents: read
 
     env:
-      OPENBMC_IMAGE: https://github.com/Alone0506/openbmc/releases/download/CI_Test/obmc-phosphor-image-evb-ast2600.static.mtd
-      OPENBMC_TEST_REPO: https://github.com/Alone0506/openbmc-test-automation.git
-      OPENBMC_TEST_DIR: openbmc-test-automation
-      OPENBMC_HOST: 127.0.0.1
-      OPENBMC_USERNAME: root
-      OPENBMC_PASSWORD: 0penBmc
-      SSH_PORT: "2222"
-      HTTPS_PORT: "2443"
-      IPMI_PORT: "2623"
-      QEMU_LOG: ${{ github.workspace }}/qemu-ast2600.log
+      OPENBMC_IMAGE_URL: https://github.com/Alone0506/openbmc/releases/download/CI_Test/obmc-phosphor-image-evb-ast2600.static.mtd
+      HOST: 127.0.0.1
+      USER: root
+      PASS: 0penBmc
+      SSH_PORT: 2222
+      QEMU_LOG: ${{ github.workspace }}/qemu.log
+
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Download OpenBMC image
-        run: |
-          set -euo pipefail
-          curl -L -o image.mtd $OPENBMC_IMAGE
-          ls -l image.mtd
+        run: curl -L -o image.mtd $OPENBMC_IMAGE_URL
 
       - name: Install host dependencies
         run: |
-          set -euxo pipefail
           sudo apt-get update
           sudo apt-get install -y \
             qemu-system-arm \
@@ -47,74 +41,49 @@ jobs:
             python3-pip
 
       - name: Launch AST2600 EVB in QEMU
-        run: |
-          set -euxo pipefail
-          nohup qemu-system-arm \
-            -m 1G \
-            -M ast2600-evb \
-            -nographic \
-            -drive file=image.mtd,format=raw,if=mtd \
-            -net nic \
-            -net user,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22,hostfwd=tcp:127.0.0.1:${HTTPS_PORT}-:443,hostfwd=udp:127.0.0.1:${IPMI_PORT}-:623,hostname=qemu \
-            >"$QEMU_LOG" 2>&1 &
-          echo "QEMU_PID=$!" >> "$GITHUB_ENV"
-          echo "QEMU launched with PID $!"
+        run: >
+          nohup qemu-system-arm
+          -m 1G
+          -M ast2600-evb
+          -nographic
+          -drive file=image.mtd,format=raw,if=mtd
+          -net nic
+          -net user,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22
+          >"$QEMU_LOG" 2>&1 &
+          echo "QEMU_PID=$!" >> $GITHUB_ENV
 
-      - name: Clone test automation and install Python requirements
-        run: |
-          set -euxo pipefail
-          git clone "$OPENBMC_TEST_REPO"
-          cd "$OPENBMC_TEST_DIR"
-          python3 -m venv .venv
-          . .venv/bin/activate
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+      - uses: actions/checkout@v4
+        with:
+          repository: Alone0506/openbmc-test-automation
+          path: tests
 
-      - name: Wait for SSH available after QEMU boot
+      - name: Install openbmc-test-automation deps
         run: |
-          set -euo pipefail
-          for attempt in $(seq 1 30); do
-            if sshpass -p "$OPENBMC_PASSWORD" ssh \
-              -o StrictHostKeyChecking=no \
-              -o UserKnownHostsFile=/dev/null \
-              -o ConnectTimeout=5 \
-              -p "$SSH_PORT" \
-              "${OPENBMC_USERNAME}@${OPENBMC_HOST}" \
-              'true' >/dev/null 2>&1; then
-              exit 0
-            fi
+          python3 -m venv tests/.venv
+          tests/.venv/bin/pip install -U pip -r tests/requirements.txt
 
-            echo "SSH not ready before Robot yet (attempt ${attempt}/30)"
+      - name: Wait QEMU SSH work
+        run: |
+          for i in {1..30}; do
+            sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no \
+              -p $SSH_PORT $USER@$HOST true && exit 0
             sleep 10
           done
-
-          echo "Timed out waiting for SSH before Robot."
-          tail -n 200 "$QEMU_LOG" || true
+          tail -200 "$QEMU_LOG"
           exit 1
 
-      - name: Run Robot setup test
-        run: |
-          set -euxo pipefail
-          cd "$OPENBMC_TEST_DIR"
-          . .venv/bin/activate
-          robot -V env.py templates/test_openbmc_setup.robot
+      - name: Run Robot
+        run: tests/.venv/bin/robot -V tests/env.py tests/templates/test_openbmc_setup.robot
 
-      - name: Stop QEMU
+      - name: Cleanup
         if: always()
-        run: |
-          if [[ -n "${QEMU_PID:-}" ]] && kill -0 "$QEMU_PID" 2>/dev/null; then
-            kill "$QEMU_PID"
-            wait "$QEMU_PID" || true
-          fi
+        run: pkill -f qemu-system-arm || true
 
-      - name: Upload QEMU and Robot logs
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
-          name: ast2600-qemu-setup-logs
-          if-no-files-found: warn
+          name: logs
           path: |
             ${{ env.QEMU_LOG }}
-            openbmc-test-automation/output.xml
-            openbmc-test-automation/log.html
-            openbmc-test-automation/report.html
+            tests/*.xml
+            tests/*.html
