@@ -73,8 +73,9 @@ jobs:
           exit 1
 
       - name: Run Robot
+        working-directory: tests
         run: |
-          . test/.venv/bin/activate
+          . .venv/bin/activate
           robot -V env.py templates/test_openbmc_setup.robot
 
       - name: Cleanup
