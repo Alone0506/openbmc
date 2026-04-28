@@ -7,14 +7,13 @@ on:
 jobs:
   qemu-setup:
     name: Boot AST2600 and run setup robot
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     permissions:
       contents: read
 
     env:
       OPENBMC_IMAGE: https://github.com/Alone0506/openbmc/releases/download/CI_Test/obmc-phosphor-image-evb-ast2600.static.mtd
-      QEMU_IMAGE: https://github.com/Alone0506/openbmc/releases/download/CI_Test/qemu-system-arm
       OPENBMC_TEST_REPO: https://github.com/Alone0506/openbmc-test-automation.git
       OPENBMC_TEST_DIR: openbmc-test-automation
       OPENBMC_HOST: 127.0.0.1
@@ -29,20 +28,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download QEMU and OpenBMC image
+      - name: Download OpenBMC image
         run: |
           set -euo pipefail
           curl -L -o image.mtd $OPENBMC_IMAGE
-          curl -L -o qemu-system-arm $QEMU_IMAGE
-          chmod +x qemu-system-arm
-          file qemu-system-arm
-          ls -l qemu-system-arm image.mtd
+          ls -l image.mtd
 
       - name: Install host dependencies
         run: |
           set -euxo pipefail
           sudo apt-get update
           sudo apt-get install -y \
+            qemu-system-arm \
             openssh-client \
             sshpass \
             ipmitool \
