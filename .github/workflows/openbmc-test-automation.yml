@@ -68,6 +68,7 @@ jobs:
             sshpass -p "$PASS" ssh \
               -o StrictHostKeyChecking=no \
               -o UserKnownHostsFile=/dev/null \
+              -o LogLevel=ERROR \
               -p $SSH_PORT $USER@$HOST true && exit 0
             echo "SSH not ready yet (attempt ${i}/30)"
             sleep 10
