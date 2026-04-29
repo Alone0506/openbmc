@@ -23,9 +23,12 @@ jobs:
       run:
         shell: bash
 
+    outputs:
+      logs_id: ${{ steps.logs.outputs.artifact-id }}
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download OpenBMC image
         run: curl -L -o image.mtd $OPENBMC_IMAGE_URL
@@ -52,7 +55,7 @@ jobs:
           -net user,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22,hostfwd=tcp:127.0.0.1:${HTTPS_PORT}-:443,hostfwd=udp:127.0.0.1:${IPMI_PORT}-:623,hostname=qemu
           >"$QEMU_LOG" 2>&1 &
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           repository: Alone0506/openbmc-test-automation
           path: tests
@@ -86,14 +89,19 @@ jobs:
         if: always()
         run: pkill -f qemu-system-arm || true
 
-      - uses: actions/upload-artifact@v4
+      - name: Prepare artifact files
         if: always()
+        run: |
+          mkdir -p artifact
+          cp "$QEMU_LOG" artifact/ || true
+          cp tests/*.html artifact/ || true
+          cp tests/*.xml artifact/ || true
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        id: logs # add artifact tag
         with:
-          name: logs # add artifact tag
-          path: |
-            ${{ env.QEMU_LOG }}
-            tests/*.xml
-            tests/*.html
+          path: artifact/*
 
   deploy-pages:
     needs: openbmc-test-automation
@@ -108,10 +116,12 @@ jobs:
 
     runs-on: ubuntu-latest
     steps:
-      - name: Download artifact logs
-        uses: actions/download-artifact@v4
+      - name: Download logs
+        env:
+          LOGID: ${{needs.openbmc-test-automation.outputs.logs_id}}
+        uses: actions/download-artifact@v7
         with:
-          name: logs # artifact tag
+          artifact-ids: ${{ env.LOGID }}
           path: tests # download to tests folder
 
       - name: Prepare Pages Content
@@ -121,76 +131,24 @@ jobs:
 
           mkdir -p site/runs/$RUN_ID
 
-          cp tests/*.html site/runs/$RUN_ID/ 2>/dev/null || true
-          cp tests/*.xml site/runs/$RUN_ID/ 2>/dev/null || true
+          cp tests/*.html site/runs/$RUN_ID/ || true
+          cp tests/*.xml site/runs/$RUN_ID/ || true
+          cp "$QEMU_LOG" site/runs/$RUN_ID/ || true
 
-          # 重新產生首頁
-          cat > site/index.html <<'EOF'
-          <html>
-          <head>
-            <meta charset="utf-8">
-            <title>CI Reports</title>
-            <style>
-              body {
-                font-family: Arial, sans-serif;
-                margin: 30px;
-              }
-              h1 {
-                margin-bottom: 20px;
-              }
-              details {
-                margin-bottom: 12px;
-                padding: 8px;
-                border: 1px solid #ccc;
-                border-radius: 6px;
-                background: #f9f9f9;
-              }
-              summary {
-                cursor: pointer;
-                font-weight: bold;
-                font-size: 16px;
-              }
-              ul {
-                margin-top: 8px;
-                margin-left: 20px;
-              }
-              li {
-                margin: 4px 0;
-              }
-              a {
-                text-decoration: none;
-                color: #0366d6;
-              }
-              a:hover {
-                text-decoration: underline;
-              }
-            </style>
-          </head>
-          <body>
-            <h1>CI Reports</h1>
-          EOF
+          echo "<html><body><h1>Files</h1><ul>" > site/index.html
 
-          for d in $(ls -r site/runs); do
-            echo "<details>" >> site/index.html
-            echo "<summary>$d</summary>" >> site/index.html
-            echo "<ul>" >> site/index.html
-
-            for f in site/runs/$d/*; do
-              fname=$(basename "$f")
-              echo "<li><a href=\"runs/$d/$fname\" target=\"_blank\">$fname</a></li>" >> site/index.html
-            done
-
-            echo "</ul>" >> site/index.html
-            echo "</details>" >> site/index.html
+          for f in site/runs/$RUN_ID/*; do
+            name=$(basename "$f")
+            echo "<li><a href=\"runs/$RUN_ID/$name\" target=\"_blank\">$name</a></li>" >> site/index.html
           done
 
-          echo "</body></html>" >> site/index.html
+          echo "</ul></body></html>" >> site/index.html
 
       - name: Setup Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
 
       - name: Upload Pages Artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: site
 
