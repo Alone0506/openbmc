@@ -129,7 +129,7 @@ jobs:
         if: always()
         run: |
           echo "<html><body><h1>CI Report</h1><ul>" > index.html
-          echo "<li><a href=\"$ACTIONS_URL\">Action URL</a></li>" >> index.html
+          echo "<h2><a href=\"$ACTIONS_URL\">Action URL</a></h2>" >> index.html
 
           for f in tests/*; do
             name=$(basename "$f")
