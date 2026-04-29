@@ -8,6 +8,8 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
+      pages: write
+      id-token: write
 
     env:
       OPENBMC_IMAGE_URL: https://github.com/Alone0506/openbmc/releases/download/CI_Test/obmc-phosphor-image-evb-ast2600.static.mtd
@@ -94,3 +96,35 @@ jobs:
             ${{ env.QEMU_LOG }}
             tests/*.xml
             tests/*.html
+
+      - name: Prepare Pages Content
+        if: always()
+        run: |
+          RUN_ID=$(date +%Y%m%d-%H%M%S)
+
+          mkdir -p site/runs/$RUN_ID
+
+          cp tests/*.html site/runs/$RUN_ID/ || true
+          cp tests/*.xml site/runs/$RUN_ID/ || true
+
+          echo "<html><body>" > site/index.html
+          echo "<h1>CI Reports</h1><ul>" >> site/index.html
+
+          for d in site/runs/*; do
+            name=$(basename $d)
+            echo "<li><a href=\"runs/$name/\">$name</a></li>" >> site/index.html
+          done
+
+          echo "</ul></body></html>" >> site/index.html
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
