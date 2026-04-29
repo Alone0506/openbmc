@@ -121,18 +121,70 @@ jobs:
 
           mkdir -p site/runs/$RUN_ID
 
-          cp tests/*.html site/runs/$RUN_ID/ || true
-          cp tests/*.xml site/runs/$RUN_ID/ || true
+          cp tests/*.html site/runs/$RUN_ID/ 2>/dev/null || true
+          cp tests/*.xml site/runs/$RUN_ID/ 2>/dev/null || true
 
-          echo "<html><body>" > site/index.html
-          echo "<h1>CI Reports</h1><ul>" >> site/index.html
+          # 重新產生首頁
+          cat > site/index.html <<'EOF'
+          <html>
+          <head>
+            <meta charset="utf-8">
+            <title>CI Reports</title>
+            <style>
+              body {
+                font-family: Arial, sans-serif;
+                margin: 30px;
+              }
+              h1 {
+                margin-bottom: 20px;
+              }
+              details {
+                margin-bottom: 12px;
+                padding: 8px;
+                border: 1px solid #ccc;
+                border-radius: 6px;
+                background: #f9f9f9;
+              }
+              summary {
+                cursor: pointer;
+                font-weight: bold;
+                font-size: 16px;
+              }
+              ul {
+                margin-top: 8px;
+                margin-left: 20px;
+              }
+              li {
+                margin: 4px 0;
+              }
+              a {
+                text-decoration: none;
+                color: #0366d6;
+              }
+              a:hover {
+                text-decoration: underline;
+              }
+            </style>
+          </head>
+          <body>
+            <h1>CI Reports</h1>
+          EOF
 
-          for d in site/runs/*; do
-            name=$(basename $d)
-            echo "<li><a href=\"runs/$name/\">$name</a></li>" >> site/index.html
+          for d in $(ls -r site/runs); do
+            echo "<details>" >> site/index.html
+            echo "<summary>$d</summary>" >> site/index.html
+            echo "<ul>" >> site/index.html
+
+            for f in site/runs/$d/*; do
+              fname=$(basename "$f")
+              echo "<li><a href=\"runs/$d/$fname\" target=\"_blank\">$fname</a></li>" >> site/index.html
+            done
+
+            echo "</ul>" >> site/index.html
+            echo "</details>" >> site/index.html
           done
 
-          echo "</ul></body></html>" >> site/index.html
+          echo "</body></html>" >> site/index.html
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
