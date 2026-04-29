@@ -8,8 +8,6 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
-      pages: write
-      id-token: write
 
     env:
       OPENBMC_IMAGE_URL: https://github.com/Alone0506/openbmc/releases/download/CI_Test/obmc-phosphor-image-evb-ast2600.static.mtd
@@ -103,6 +101,10 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
 
     runs-on: ubuntu-latest
     steps:
