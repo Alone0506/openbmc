@@ -125,19 +125,7 @@ jobs:
       - name: Prepare Pages Content
         if: always()
         run: |
-          ACTIONS_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-
-          echo "<html><body><h1>CI Report</h1><ul>" > index.html
-          echo "<h3><a href=\"$ACTIONS_URL\">GitHub Actions URL</a></h3>" >> index.html
-
-          for f in tests/*; do
-            name=$(basename "$f")
-            echo "<li><a href=\"$name\" target=\"_blank\">$name</a></li>" >> index.html
-          done
-
-          echo "</ul></body></html>" >> index.html
-
-          mv index.html tests/index.html
+          echo "<meta http-equiv="refresh" content="0; url=report.html">" > tests/index.html
 
       - name: Setup Pages
         uses: actions/configure-pages@v6
