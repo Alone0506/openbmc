@@ -119,6 +119,7 @@ jobs:
       - name: Download logs
         env:
           LOGID: ${{needs.openbmc-test-automation.outputs.logs_id}}
+          ACTIONS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.repository_id }}
         uses: actions/download-artifact@v7
         with:
           artifact-ids: ${{ env.LOGID }}
@@ -127,22 +128,19 @@ jobs:
       - name: Prepare Pages Content
         if: always()
         run: |
-          RUN_ID=$(date +%Y%m%d-%H%M%S)
+          ACTIONS_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
-          mkdir -p site/runs/$RUN_ID
+          echo "<html><body><h1>CI Report</h1><ul>" > index.html
+          echo "<li><a href=\"$ACTIONS_URL\">Action URL</a></li>" >> index.html
 
-          cp tests/*.html site/runs/$RUN_ID/ || true
-          cp tests/*.xml site/runs/$RUN_ID/ || true
-          cp "$QEMU_LOG" site/runs/$RUN_ID/ || true
-
-          echo "<html><body><h1>Files</h1><ul>" > site/index.html
-
-          for f in site/runs/$RUN_ID/*; do
+          for f in tests/*; do
             name=$(basename "$f")
-            echo "<li><a href=\"runs/$RUN_ID/$name\" target=\"_blank\">$name</a></li>" >> site/index.html
+            echo "<li><a href=\"$name\" target=\"_blank\">$name</a></li>" >> index.html
           done
 
-          echo "</ul></body></html>" >> site/index.html
+          echo "</ul></body></html>" >> index.html
+
+          mv index.html tests/index.html
 
       - name: Setup Pages
         uses: actions/configure-pages@v6
@@ -150,7 +148,7 @@ jobs:
       - name: Upload Pages Artifact
         uses: actions/upload-pages-artifact@v5
         with:
-          path: site
+          path: tests
 
       - name: Deploy to GitHub Pages
         id: deployment
