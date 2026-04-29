@@ -117,19 +117,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download logs
-        env:
-          LOGID: ${{needs.openbmc-test-automation.outputs.logs_id}}
-          ACTIONS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
         uses: actions/download-artifact@v7
         with:
-          artifact-ids: ${{ env.LOGID }}
+          artifact-ids: ${{ needs.openbmc-test-automation.outputs.logs_id }}
           path: tests # download to tests folder
 
       - name: Prepare Pages Content
         if: always()
         run: |
+          ACTIONS_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
           echo "<html><body><h1>CI Report</h1><ul>" > index.html
-          echo "<h2><a href=\"$ACTIONS_URL\">Action URL</a></h2>" >> index.html
+          echo "<h3><a href=\"$ACTIONS_URL\">GitHub Actions URL</a></h3>" >> index.html
 
           for f in tests/*; do
             name=$(basename "$f")
