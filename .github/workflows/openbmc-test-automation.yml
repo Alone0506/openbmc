@@ -119,7 +119,7 @@ jobs:
       - name: Download logs
         env:
           LOGID: ${{needs.openbmc-test-automation.outputs.logs_id}}
-          ACTIONS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.repository_id }}
+          ACTIONS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
         uses: actions/download-artifact@v7
         with:
           artifact-ids: ${{ env.LOGID }}
@@ -128,8 +128,6 @@ jobs:
       - name: Prepare Pages Content
         if: always()
         run: |
-          ACTIONS_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-
           echo "<html><body><h1>CI Report</h1><ul>" > index.html
           echo "<li><a href=\"$ACTIONS_URL\">Action URL</a></li>" >> index.html
 
