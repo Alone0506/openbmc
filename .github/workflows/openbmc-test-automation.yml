@@ -125,7 +125,7 @@ jobs:
       - name: Prepare Pages Content
         if: always()
         run: |
-          echo "<meta http-equiv="refresh" content="0; url=report.html">" > tests/index.html
+          echo "<meta http-equiv=\"refresh\" content=\"0; url=report.html\">" > tests/index.html
 
       - name: Setup Pages
         uses: actions/configure-pages@v6
