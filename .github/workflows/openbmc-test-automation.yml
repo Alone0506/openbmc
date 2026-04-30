@@ -81,7 +81,8 @@ jobs:
       - name: Run Robot
         working-directory: tests
         run: |
-          .venv/bin/robot -V env.py -A test_lists/QEMU_CI redfish/ ipmi/
+          source .venv/bin/activate
+          robot -V env.py -A test_lists/QEMU_CI redfish/ ipmi/
 
       - name: Cleanup
         if: always()
