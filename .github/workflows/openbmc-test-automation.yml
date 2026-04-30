@@ -61,9 +61,14 @@ jobs:
           path: tests
 
       - name: Install openbmc-test-automation deps
+        working-directory: tests
         run: |
-          python3 -m venv tests/.venv
-          tests/.venv/bin/pip install -U pip -r tests/requirements.txt
+          python --version
+          python3 -m venv .venv
+          source .venv/bin/activate
+          pip install -r requirements.txt
+          robot --version
+          deactivate
 
       - name: Wait QEMU SSH work
         run: |
@@ -82,8 +87,9 @@ jobs:
       - name: Run Robot
         working-directory: tests
         run: |
-          . .venv/bin/activate
+          source .venv/bin/activate
           robot -V env.py -A test_lists/QEMU_CI redfish/ ipmi/
+          deactivate
 
       - name: Cleanup
         if: always()
