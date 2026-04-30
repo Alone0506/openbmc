@@ -1,6 +1,6 @@
 name: QEMU AST2600 Setup CI
 
-on: [push, workflow_dispatch]
+on: workflow_dispatch
 
 jobs:
   openbmc-test-automation:
@@ -23,15 +23,12 @@ jobs:
       run:
         shell: bash
 
-    outputs:
-      logs_id: ${{ steps.logs.outputs.artifact-id }}
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
 
       - name: Download OpenBMC image
-        run: curl -L -o image.mtd $OPENBMC_IMAGE_URL
+        run: curl -L -o image.mtd "$OPENBMC_IMAGE_URL"
 
       - name: Install host dependencies
         run: |
@@ -63,12 +60,9 @@ jobs:
       - name: Install openbmc-test-automation deps
         working-directory: tests
         run: |
-          python --version
           python3 -m venv .venv
-          source .venv/bin/activate
-          pip install -r requirements.txt
-          robot --version || true
-          deactivate
+          .venv/bin/pip install -r requirements.txt
+          .venv/bin/robot --version || true
 
       - name: Wait QEMU SSH work
         run: |
@@ -87,9 +81,7 @@ jobs:
       - name: Run Robot
         working-directory: tests
         run: |
-          source .venv/bin/activate
-          robot -V env.py -A test_lists/QEMU_CI redfish/ ipmi/
-          deactivate
+          .venv/bin/robot -V env.py -A test_lists/QEMU_CI redfish/ ipmi/
 
       - name: Cleanup
         if: always()
@@ -105,8 +97,8 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         if: always()
-        id: logs # add artifact tag
         with:
+          name: openbmc-test-logs
           path: artifact/*
 
   deploy-pages:
@@ -125,7 +117,7 @@ jobs:
       - name: Download logs
         uses: actions/download-artifact@v7
         with:
-          artifact-ids: ${{ needs.openbmc-test-automation.outputs.logs_id }}
+          name: openbmc-test-logs
           path: tests # download to tests folder
 
       - name: Prepare Pages Content
