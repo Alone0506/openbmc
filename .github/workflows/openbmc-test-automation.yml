@@ -112,8 +112,9 @@ jobs:
 
           ipmi_ready=false
           for i in {1..30}; do
-            if timeout 10s ipmitool -C 17 -N 3 -p "$IPMI_PORT" -U "$USER" \
-              -P "$PASS" -H "$HOST" mc info; then
+
+            if timeout 10s ipmitool -I lanplus -C 17 -N 1 -p "$IPMI_PORT" \
+              -U "$USER" -P "$PASS" -H "$HOST" mc info; then
               ipmi_ready=true
               break
             fi
