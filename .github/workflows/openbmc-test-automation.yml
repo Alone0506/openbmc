@@ -87,7 +87,7 @@ jobs:
             exit 1
           fi
 
-      - name: Wait Redfish and IPMI ready
+      - name: Wait Redfish ready
         run: |
           set -o pipefail
 
