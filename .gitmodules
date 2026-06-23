@@ -46,3 +46,6 @@
 [submodule "meta-ted/recipes-phosphor/leds/phosphor-led-manager"]
 	path = meta-ted/recipes-phosphor/leds/phosphor-led-manager
 	url = https://github.com/Alone0506/phosphor-led-manager.git
+[submodule "meta-ted/recipes-phosphor/dump/phosphor-debug-collector"]
+	path = meta-ted/recipes-phosphor/dump/phosphor-debug-collector
+	url = https://github.com/Alone0506/phosphor-debug-collector.git
