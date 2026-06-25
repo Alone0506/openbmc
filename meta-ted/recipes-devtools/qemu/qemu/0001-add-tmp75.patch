@@ -1,0 +1,38 @@
+From 61f876926f101f25618f2327187e67b93740c7d4 Mon Sep 17 00:00:00 2001
+From: ted <wii03903975@gmail.com>
+Date: Thu, 25 Jun 2026 22:55:40 +0800
+Subject: [PATCH] add-tmp75
+
+Upstream-Status: Inappropriate [local OpenBMC test configuration]
+
+---
+ hw/arm/aspeed_ast2600_evb.c | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/hw/arm/aspeed_ast2600_evb.c b/hw/arm/aspeed_ast2600_evb.c
+index c43d2687c..437b64b79 100644
+--- a/hw/arm/aspeed_ast2600_evb.c
++++ b/hw/arm/aspeed_ast2600_evb.c
+@@ -21,14 +21,20 @@
+ static void ast2600_evb_i2c_init(AspeedMachineState *bmc)
+ {
+     AspeedSoCState *soc = bmc->soc;
++    DeviceState *dev;
+     uint8_t *eeprom_buf = g_malloc0(8 * 1024);
+ 
+     smbus_eeprom_init_one(aspeed_i2c_get_bus(&soc->i2c, 7), 0x50,
+                           eeprom_buf);
+ 
+     /* LM75 is compatible with TMP105 driver */
+-    i2c_slave_create_simple(aspeed_i2c_get_bus(&soc->i2c, 8),
+-                     TYPE_TMP105, 0x4d);
++    dev = DEVICE(i2c_slave_create_simple(aspeed_i2c_get_bus(&soc->i2c, 8),
++                                         TYPE_TMP105, 0x4d));
++    object_property_set_int(OBJECT(dev), "temperature", 35000, &error_abort);
++
++    dev = DEVICE(i2c_slave_create_simple(aspeed_i2c_get_bus(&soc->i2c, 9),
++                                         TYPE_TMP105, 0x4d));
++    object_property_set_int(OBJECT(dev), "temperature", 45000, &error_abort);
+ }
+ 
+ static void aspeed_machine_ast2600_evb_class_init(ObjectClass *oc,
