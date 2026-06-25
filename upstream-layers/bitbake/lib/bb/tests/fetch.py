@@ -7,6 +7,7 @@
 #
 
 import contextlib
+import http.server
 import shutil
 import unittest
 import unittest.mock
@@ -16,9 +17,10 @@ import tempfile
 import collections
 import os
 import signal
+import subprocess
 import tarfile
+import threading
 from bb.fetch2 import URI
-from bb.fetch2 import FetchMethod
 import bb
 import bb.utils
 from bb.tests.support.httpserver import HTTPService
@@ -292,8 +294,8 @@ class URITest(unittest.TestCase):
             'query': {},
             'relative': True
         },
-        "https://www.innodisk.com/Download_file?9BE0BF6657;downloadfilename=EGPL-T101.zip": {
-            'uri': 'https://www.innodisk.com/Download_file?9BE0BF6657;downloadfilename=EGPL-T101.zip',
+        "https://www.innodisk.com/Download_file?9BE0BF6657;downloadfilename=EGPL-T101.zip;someparam=": {
+            'uri': 'https://www.innodisk.com/Download_file?9BE0BF6657;downloadfilename=EGPL-T101.zip;someparam=',
             'scheme': 'https',
             'hostname': 'www.innodisk.com',
             'port': None,
@@ -303,7 +305,7 @@ class URITest(unittest.TestCase):
             'userinfo': '',
             'username': '',
             'password': '',
-            'params': {"downloadfilename" : "EGPL-T101.zip"},
+            'params': {"downloadfilename" : "EGPL-T101.zip", "someparam" : ""},
             'query': {"9BE0BF6657": None},
             'relative': False
         },
@@ -425,20 +427,17 @@ class FetcherTest(unittest.TestCase):
         if os.environ.get("BB_TMPDIR_NOCLEAN") == "yes":
             print("Not cleaning up %s. Please remove manually." % self.tempdir)
         else:
-            bb.process.run('chmod u+rw -R %s' % self.tempdir)
+            bb.process.run(['chmod', 'u+rw', '-R', self.tempdir])
             bb.utils.prunedir(self.tempdir)
 
     def git(self, cmd, cwd=None):
-        if isinstance(cmd, str):
-            cmd = 'git -c safe.bareRepository=all ' + cmd
-        else:
-            cmd = ['git', '-c', 'safe.bareRepository=all'] + cmd
+        cmd = ['git', '-c', 'safe.bareRepository=all'] + cmd
         if cwd is None:
             cwd = self.gitdir
         return bb.process.run(cmd, cwd=cwd)[0]
 
     def git_init(self, cwd=None):
-        self.git('init', cwd=cwd)
+        self.git(['init'], cwd=cwd)
         # Explicitly set initial branch to master as
         # a common setup is to use other default
         # branch than master.
@@ -551,8 +550,8 @@ class MirrorUriTest(FetcherTest):
         fetcher = bb.fetch.FetchData("http://downloads.yoctoproject.org/releases/bitbake/bitbake-1.0.tar.gz", self.d)
         mirrors = bb.fetch2.mirror_from_string(mirrorvar)
         uris, uds = bb.fetch2.build_mirroruris(fetcher, mirrors, self.d)
-        self.assertEqual(uris, ['file:///somepath/downloads/bitbake-1.0.tar.gz', 
-                                'file:///someotherpath/downloads/bitbake-1.0.tar.gz', 
+        self.assertEqual(uris, ['file:///somepath/downloads/bitbake-1.0.tar.gz',
+                                'file:///someotherpath/downloads/bitbake-1.0.tar.gz',
                                 'http://otherdownloads.yoctoproject.org/downloads/bitbake-1.0.tar.gz',
                                 'http://downloads2.yoctoproject.org/downloads/bitbake-1.0.tar.gz'])
 
@@ -701,7 +700,7 @@ class CleanTarballTest(FetcherTest):
         fetcher.download()
 
         fetcher.unpack(self.unpackdir)
-        mtime = bb.process.run('git log --all -1 --format=%ct',
+        mtime = bb.process.run(['git', 'log', '--all', '-1', '--format=%ct'],
                 cwd=os.path.join(self.unpackdir, 'git'))
         self.assertEqual(len(mtime), 2)
         mtime = int(mtime[0])
@@ -736,10 +735,38 @@ class FetcherLocalTest(FetcherTest):
         os.makedirs(os.path.join(self.localsrcdir, 'dir', 'subdir'))
         touch(os.path.join(self.localsrcdir, 'dir', 'subdir', 'e'))
         touch(os.path.join(self.localsrcdir, r'backslash\x2dsystemd-unit.device'))
-        bb.process.run('tar cf archive.tar -C dir .', cwd=self.localsrcdir)
-        bb.process.run('tar czf archive.tar.gz -C dir .', cwd=self.localsrcdir)
-        bb.process.run('tar cjf archive.tar.bz2 -C dir .', cwd=self.localsrcdir)
+        bb.process.run(['tar', 'cf', 'archive.tar', '-C', 'dir', '.'], cwd=self.localsrcdir)
+        bb.process.run(['tar', 'czf', 'archive.tar.gz', '-C', 'dir', '.'], cwd=self.localsrcdir)
+        bb.process.run(['tar', 'cjf', 'archive.tar.bz2', '-C', 'dir', '.'], cwd=self.localsrcdir)
         self.d.setVar("FILESPATH", self.localsrcdir)
+
+    def make_ar_package(self, package_name, data_member="data.tar"):
+        if not shutil.which("ar"):
+            self.skipTest("ar not installed")
+
+        workdir = tempfile.mkdtemp(dir=self.tempdir)
+        payload = os.path.join(workdir, "payload")
+        with open(payload, "w") as f:
+            f.write("payload\n")
+
+        data_path = os.path.join(workdir, data_member)
+        mode = "w:gz" if data_member.endswith(".gz") else "w"
+        with tarfile.open(data_path, mode) as archive:
+            archive.add(payload, arcname="payload")
+
+        with open(os.path.join(workdir, "debian-binary"), "w") as f:
+            f.write("2.0\n")
+
+        control = os.path.join(workdir, "control")
+        with open(control, "w") as f:
+            f.write("Package: fetch-test\nVersion: 1\nArchitecture: all\n")
+        with tarfile.open(os.path.join(workdir, "control.tar"), "w") as archive:
+            archive.add(control, arcname="control")
+
+        package_path = os.path.join(self.localsrcdir, package_name)
+        subprocess.check_call(["ar", "r", package_path, "debian-binary", "control.tar", data_member],
+                              cwd=workdir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return package_name
 
     def fetchUnpack(self, uris):
         fetcher = bb.fetch.Fetch(uris, self.d)
@@ -813,6 +840,40 @@ class FetcherLocalTest(FetcherTest):
     def test_local_striplevel_bzip2(self):
         tree = self.fetchUnpack(['file://archive.tar.bz2;subdir=bar;striplevel=1'])
         self.assertEqual(tree, ['bar/c', 'bar/d', 'bar/subdir/e'])
+
+    def test_local_deb_quoted_filename(self):
+        package = self.make_ar_package("archive$(id).deb")
+        tree = self.fetchUnpack(['file://%s' % package])
+        self.assertEqual(tree, ['payload'])
+
+    def test_local_ipk_gz_data_member(self):
+        package = self.make_ar_package("archive.ipk", data_member="data.tar.gz")
+        tree = self.fetchUnpack(['file://%s' % package])
+        self.assertEqual(tree, ['payload'])
+
+    def test_local_deb_rejects_unknown_data_member_suffix(self):
+        package = self.make_ar_package("archive.deb", data_member="data.tar.foo")
+        with self.assertRaises(bb.fetch2.UnpackError) as context:
+            self.fetchUnpack(['file://%s' % package])
+
+        self.assertIn("does not contain supported data.tar* file", str(context.exception))
+
+    def test_local_deb_rejects_unsafe_data_member(self):
+        package = self.make_ar_package("archive.deb", data_member="data.tar.xz;id")
+        with self.assertRaises(bb.fetch2.UnpackError) as context:
+            self.fetchUnpack(['file://%s' % package])
+
+        self.assertIn("does not contain supported data.tar* file", str(context.exception))
+
+    def assertInvalidStriplevel(self, value):
+        with self.assertRaises(bb.fetch2.UnpackError) as context:
+            self.fetchUnpack(['file://archive.tar;subdir=bar;striplevel=%s' % value])
+        self.assertIn("Invalid striplevel parameter", str(context.exception))
+
+    def test_local_striplevel_rejects_invalid_values(self):
+        for value in ("abc", "", "-1", "1\n", "1 2"):
+            with self.subTest(striplevel=repr(value)):
+                self.assertInvalidStriplevel(value)
 
     def dummyGitTest(self, suffix):
         # Create dummy local Git repo
@@ -1115,7 +1176,7 @@ class FetcherNetworkTest(FetcherTest):
         # URL with ssh submodules
         url = "gitsm://git.yoctoproject.org/git-submodule-test;branch=ssh-gitsm-tests;rev=049da4a6cb198d7c0302e9e8b243a1443cb809a7;branch=master;protocol=https"
         # Original URL (comment this if you have ssh access to git.yoctoproject.org)
-        url = "gitsm://git.yoctoproject.org/git-submodule-test;branch=master;rev=a2885dd7d25380d23627e7544b7bbb55014b16ee;branch=master;protocol=https"
+        url = "gitsm://git.yoctoproject.org/git-submodule-test;branch=master;rev=38e61644af90dccd73c03ed3acaed98c8dda9294;branch=master;protocol=https"
         fetcher = bb.fetch.Fetch([url], self.d)
         fetcher.download()
         # Previous cwd has been deleted
@@ -1282,18 +1343,18 @@ class SVNTest(FetcherTest):
         repo_dir = tempfile.mkdtemp(dir=self.tempdir,
                                    prefix='svnfetch_localrepo_')
         repo_dir = os.path.abspath(repo_dir)
-        bb.process.run("svnadmin create project", cwd=repo_dir)
+        bb.process.run(['svnadmin', 'create', 'project'], cwd=repo_dir)
 
         self.repo_url = "file://%s/project" % repo_dir
-        bb.process.run("svn import --non-interactive -m 'Initial import' %s %s/trunk" % (src_dir, self.repo_url),
+        bb.process.run(['svn', 'import', '--non-interactive', '-m', 'Initial import', src_dir, "%s/trunk" % self.repo_url],
                        cwd=repo_dir)
 
-        bb.process.run("svn co %s svnfetch_co" % self.repo_url, cwd=self.tempdir)
+        bb.process.run(['svn', 'co', self.repo_url, 'svnfetch_co'], cwd=self.tempdir)
         # Github won't emulate SVN anymore (see https://github.blog/2023-01-20-sunsetting-subversion-support/)
         # Use still accessible svn repo (only trunk to avoid longer downloads)
-        bb.process.run("svn propset svn:externals 'bitbake https://svn.apache.org/repos/asf/serf/trunk' .",
+        bb.process.run(['svn', 'propset', 'svn:externals', "'bitbake https://svn.apache.org/repos/asf/serf/trunk'", "."],
                        cwd=os.path.join(self.tempdir, 'svnfetch_co', 'trunk'))
-        bb.process.run("svn commit --non-interactive -m 'Add external'",
+        bb.process.run(['svn', 'commit', '--non-interactive', '-m', 'Add external'],
                        cwd=os.path.join(self.tempdir, 'svnfetch_co', 'trunk'))
 
         self.src_dir = src_dir
@@ -1390,7 +1451,7 @@ class URLHandle(unittest.TestCase):
        "https://somesite.com/somerepo.git;user=anyUser:idtoken=1234" : ('https', 'somesite.com', '/somerepo.git', '', '', {'user': 'anyUser:idtoken=1234'}),
        'git://s.o-me_ONE:%s@git.openembedded.org/bitbake;branch=main;protocol=https' % password: ('git', 'git.openembedded.org', '/bitbake', 's.o-me_ONE', password, {'branch': 'main', 'protocol' : 'https'}),
     }
-    # we require a pathname to encodeurl but users can still pass such urls to 
+    # we require a pathname to encodeurl but users can still pass such urls to
     # decodeurl and we need to handle them
     decodedata = datatable.copy()
     decodedata.update({
@@ -1513,7 +1574,24 @@ class FetchLatestVersionTest(FetcherTest):
         # basic example; version pattern "A.B.C+cargo-D.E.F"
         ("cargo-c", "crate://crates.io/cargo-c/0.9.18+cargo-0.69")
             : "0.9.29"
-   }
+    }
+
+    test_git_stable_uris = {
+        ("dtc", "git://git.yoctoproject.org/bbfetchtests-dtc.git;branch=master;protocol=https", "65cc4d2748a2c2e6f27f1cf39e07a5dbabd80ebf", "", r"^1\.4\.\d+$")
+            : ("1.4.0", "1.5.0"),
+        ("systemd", "git://github.com/systemd/systemd.git;protocol=https;branch=stable/v259-stable", "b3d8fc43e9cb531d958c17ef2cd93b374bc14e8a", "", r"^259\.\d+$")
+            : ("259.5", "260")
+    }
+
+    test_wget_stable_uris = {
+        ("openssh", "https://ftp.openbsd.org/pub/OpenBSD/OpenSSH/portable/openssh-10.2p1.tar.gz", "10.2p1", "", "", r"^10\.2p\d+$")
+            : ("10.2p1", "10.3")
+    }
+
+    test_crate_stable_uris = {
+        ("cargo-c", "crate://crates.io/cargo-c/0.9.18+cargo-0.69", r"^0\.9\.\d+")
+            : ("0.9.29", "0.10.0")
+    }
 
     @skipIfNoNetwork()
     def test_git_latest_versionstring(self):
@@ -1570,6 +1648,65 @@ class FetchLatestVersionTest(FetcherTest):
                 r = bb.utils.vercmp_string(v, verstring)
                 self.assertTrue(r == -1 or r == 0, msg="Package %s, version: %s <= %s" % (k[0], v, verstring))
 
+    @skipIfNoNetwork()
+    def test_git_latest_versionstring_stable(self):
+        for k, v in self.test_git_stable_uris.items():
+            with self.subTest(pn=k[0]):
+                self.d.setVar("PN", k[0])
+                self.d.setVar("SRCREV", k[2])
+                self.d.setVar("UPSTREAM_CHECK_GITTAGREGEX", k[3])
+                filter_regex = k[4]
+                ud = bb.fetch2.FetchData(k[1], self.d)
+                pupver= ud.method.latest_versionstring(ud, self.d, filter_regex=filter_regex)
+                verstring = pupver[0]
+                self.assertTrue(verstring, msg="Could not find upstream version for %s" % k[0])
+                v_less_or_equal = v[0]
+                v_larger = v[1]
+                r = bb.utils.vercmp_string(v_less_or_equal, verstring)
+                self.assertTrue(r == -1 or r == 0, msg="Package %s, version: %s < %s" % (k[0], v_less_or_equal, verstring))
+                r = bb.utils.vercmp_string(verstring, v_larger)
+                self.assertTrue(r == -1, msg="Package %s, version: %s <= %s" % (k[0], v_larger, verstring))
+
+    @skipIfNoNetwork()
+    def test_wget_latest_versionstring_stable(self):
+        for k, v in self.test_wget_stable_uris.items():
+            with self.subTest(pn=k[0]):
+                self.d.setVar("PN", k[0])
+                url = k[1]
+                self.d.setVar("PV", k[2])
+                if k[3]:
+                    self.d.setVar("UPSTREAM_CHECK_URI", k[3])
+                if k[4]:
+                    self.d.setVar("UPSTREAM_CHECK_REGEX", k[4])
+                filter_regex = k[5]
+                ud = bb.fetch2.FetchData(url, self.d)
+                pupver= ud.method.latest_versionstring(ud, self.d, filter_regex=filter_regex)
+                verstring = pupver[0]
+                self.assertTrue(verstring, msg="Could not find upstream version for %s" % k[0])
+                v_less_or_equal = v[0]
+                v_larger = v[1]
+                r = bb.utils.vercmp_string(v_less_or_equal, verstring)
+                self.assertTrue(r == -1 or r == 0, msg="Package %s, version: %s < %s" % (k[0], v_less_or_equal, verstring))
+                r = bb.utils.vercmp_string(verstring, v_larger)
+                self.assertTrue(r == -1, msg="Package %s, version: %s <= %s" % (k[0], v_larger, verstring))
+
+    @skipIfNoNetwork()
+    def test_crate_latest_versionstring_stable(self):
+        for k, v in self.test_crate_stable_uris.items():
+            with self.subTest(pn=k[0]):
+                self.d.setVar("PN", k[0])
+                ud = bb.fetch2.FetchData(k[1], self.d)
+                filter_regex = k[2]
+                pupver = ud.method.latest_versionstring(ud, self.d, filter_regex=filter_regex)
+                verstring = pupver[0]
+                self.assertTrue(verstring, msg="Could not find upstream version for %s" % k[0])
+                v_less_or_equal = v[0]
+                v_larger = v[1]
+                r = bb.utils.vercmp_string(v_less_or_equal, verstring)
+                self.assertTrue(r == -1 or r == 0, msg="Package %s, version: %s < %s" % (k[0], v_less_or_equal, verstring))
+                r = bb.utils.vercmp_string(verstring, v_larger)
+                self.assertTrue(r == -1, msg="Package %s, version: %s <= %s" % (k[0], v_larger, verstring))
+
 class FetchCheckStatusTest(FetcherTest):
     test_wget_uris = ["https://downloads.yoctoproject.org/releases/sato/sato-engine-0.1.tar.gz",
                       "https://downloads.yoctoproject.org/releases/sato/sato-engine-0.2.tar.gz",
@@ -1580,6 +1717,41 @@ class FetchCheckStatusTest(FetcherTest):
                       "https://downloads.yoctoproject.org/releases/opkg/opkg-0.3.0.tar.gz",
                       "ftp://sourceware.org/pub/libffi/libffi-1.20.tar.gz",
                       ]
+
+    def _start_checkstatus_server(self):
+        class CheckStatusHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
+            def do_HEAD(self):
+                self.server.requests.append((self.path, dict(self.headers)))
+                if self.path == "/a" and self.server.redirect_url:
+                    self.send_response(302)
+                    self.send_header("Location", self.server.redirect_url)
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, format_str, *args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), CheckStatusHTTPRequestHandler)
+        server.redirect_url = None
+        server.requests = []
+        thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05})
+        thread.daemon = True
+        thread.start()
+
+        def stop_server():
+            server.shutdown()
+            thread.join()
+            server.server_close()
+
+        self.addCleanup(stop_server)
+        return server
+
+    def _checkstatus(self, url):
+        fetch = bb.fetch2.Fetch([url], self.d)
+        ud = fetch.ud[url]
+        return ud.method.checkstatus(fetch, ud, self.d)
 
     @skipIfNoNetwork()
     def test_wget_checkstatus(self):
@@ -1608,6 +1780,31 @@ class FetchCheckStatusTest(FetcherTest):
 
         connection_cache.close_connections()
 
+    def test_wget_checkstatus_same_origin_redirect_keeps_auth(self):
+        server = self._start_checkstatus_server()
+        server.redirect_url = "http://127.0.0.1:%s/b" % server.server_port
+
+        url = "http://127.0.0.1:%s/a;user=user;pswd=pass" % server.server_port
+        self.assertTrue(self._checkstatus(url))
+
+        self.assertEqual(len(server.requests), 2)
+        redirected_headers = {k.lower(): v for k, v in server.requests[1][1].items()}
+        self.assertIn("authorization", redirected_headers)
+
+    def test_wget_checkstatus_different_origin_redirect_drops_auth(self):
+        origin = self._start_checkstatus_server()
+        target = self._start_checkstatus_server()
+        # Same host but different port is a different origin.
+        origin.redirect_url = "http://127.0.0.1:%s/b" % target.server_port
+
+        url = "http://127.0.0.1:%s/a;user=user;pswd=pass" % origin.server_port
+        self.assertTrue(self._checkstatus(url))
+
+        self.assertEqual(len(origin.requests), 1)
+        self.assertEqual(len(target.requests), 1)
+        redirected_headers = {k.lower(): v for k, v in target.requests[0][1].items()}
+        self.assertNotIn("authorization", redirected_headers)
+
 
 class GitMakeShallowTest(FetcherTest):
     def setUp(self):
@@ -1628,11 +1825,6 @@ class GitMakeShallowTest(FetcherTest):
         actual_count = len(revs.splitlines())
         self.assertEqual(expected_count, actual_count, msg='Object count `%d` is not the expected `%d`' % (actual_count, expected_count))
 
-    def make_shallow(self, args=None):
-        if args is None:
-            args = ['HEAD']
-        return bb.process.run([bb.fetch2.git.Git.make_shallow_path] + args, cwd=self.gitdir)
-
     def add_empty_file(self, path, msg=None):
         if msg is None:
             msg = path
@@ -1640,88 +1832,6 @@ class GitMakeShallowTest(FetcherTest):
         self.git(['add', path])
         self.git(['commit', '-m', msg, path])
 
-    def test_make_shallow_single_branch_no_merge(self):
-        self.add_empty_file('a')
-        self.add_empty_file('b')
-        self.assertRevCount(2)
-        self.make_shallow()
-        self.assertRevCount(1)
-
-    def test_make_shallow_single_branch_one_merge(self):
-        self.add_empty_file('a')
-        self.add_empty_file('b')
-        self.git('checkout -b a_branch')
-        self.add_empty_file('c')
-        self.git('checkout master')
-        self.add_empty_file('d')
-        self.git('merge --no-ff --no-edit a_branch')
-        self.git('branch -d a_branch')
-        self.add_empty_file('e')
-        self.assertRevCount(6)
-        self.make_shallow(['HEAD~2'])
-        self.assertRevCount(5)
-
-    def test_make_shallow_at_merge(self):
-        self.add_empty_file('a')
-        self.git('checkout -b a_branch')
-        self.add_empty_file('b')
-        self.git('checkout master')
-        self.git('merge --no-ff --no-edit a_branch')
-        self.git('branch -d a_branch')
-        self.assertRevCount(3)
-        self.make_shallow()
-        self.assertRevCount(1)
-
-    def test_make_shallow_annotated_tag(self):
-        self.add_empty_file('a')
-        self.add_empty_file('b')
-        self.git('tag -a -m a_tag a_tag')
-        self.assertRevCount(2)
-        self.make_shallow(['a_tag'])
-        self.assertRevCount(1)
-
-    def test_make_shallow_multi_ref(self):
-        self.add_empty_file('a')
-        self.add_empty_file('b')
-        self.git('checkout -b a_branch')
-        self.add_empty_file('c')
-        self.git('checkout master')
-        self.add_empty_file('d')
-        self.git('checkout -b a_branch_2')
-        self.add_empty_file('a_tag')
-        self.git('tag a_tag')
-        self.git('checkout master')
-        self.git('branch -D a_branch_2')
-        self.add_empty_file('e')
-        self.assertRevCount(6, ['--all'])
-        self.make_shallow()
-        self.assertRevCount(5, ['--all'])
-
-    def test_make_shallow_multi_ref_trim(self):
-        self.add_empty_file('a')
-        self.git('checkout -b a_branch')
-        self.add_empty_file('c')
-        self.git('checkout master')
-        self.assertRevCount(1)
-        self.assertRevCount(2, ['--all'])
-        self.assertRefs(['master', 'a_branch'])
-        self.make_shallow(['-r', 'master', 'HEAD'])
-        self.assertRevCount(1, ['--all'])
-        self.assertRefs(['master'])
-
-    def test_make_shallow_noop(self):
-        self.add_empty_file('a')
-        self.assertRevCount(1)
-        self.make_shallow()
-        self.assertRevCount(1)
-
-    @skipIfNoNetwork()
-    def test_make_shallow_bitbake(self):
-        self.git('remote add origin https://github.com/openembedded/bitbake')
-        self.git('fetch --tags origin')
-        orig_revs = len(self.git('rev-list --all').splitlines())
-        self.make_shallow(['refs/tags/1.10.0'])
-        self.assertRevCount(orig_revs - 1746, ['--all'])
 
 class GitShallowTest(FetcherTest):
     def setUp(self):
@@ -1806,7 +1916,7 @@ class GitShallowTest(FetcherTest):
         # fetch and unpack, from the shallow tarball
         bb.utils.remove(self.gitdir, recurse=True)
         if os.path.exists(ud.clonedir):
-            bb.process.run('chmod u+w -R "%s"' % ud.clonedir)
+            bb.process.run(['chmod', 'u+w', '-R', ud.clonedir])
             bb.utils.remove(ud.clonedir, recurse=True)
             bb.utils.remove(ud.clonedir.replace('gitsource', 'gitsubmodule'), recurse=True)
 
@@ -1833,7 +1943,7 @@ class GitShallowTest(FetcherTest):
         self.add_empty_file('b')
         self.assertRevCount(2, cwd=self.srcdir)
 
-        srcrev = self.git('rev-parse HEAD', cwd=self.srcdir).strip()
+        srcrev = self.git(['rev-parse', 'HEAD'], cwd=self.srcdir).strip()
         self.d.setVar('SRCREV', srcrev)
         uri = self.d.getVar('SRC_URI').split()[0]
         uri = '%s;nobranch=1;bare=1' % uri
@@ -1900,7 +2010,7 @@ class GitShallowTest(FetcherTest):
         fetcher, ud = self.fetch()
 
         # Ensure we have a current mirror tarball, but an out of date clone
-        self.git('update-ref refs/heads/master refs/heads/master~1', cwd=ud.clonedir)
+        self.git(['update-ref', 'refs/heads/master', 'refs/heads/master~1'], cwd=ud.clonedir)
         self.assertRevCount(2, cwd=ud.clonedir)
 
         # Fetch and unpack, from the current tarball, not the out of date clone
@@ -1927,12 +2037,12 @@ class GitShallowTest(FetcherTest):
 
         self.fetch_shallow()
         self.assertRevCount(1)
-        assert not self.git('fsck --dangling')
+        assert not self.git(['fsck', '--dangling'])
 
     def test_shallow_srcrev_branch_truncation(self):
         self.add_empty_file('a')
         self.add_empty_file('b')
-        b_commit = self.git('rev-parse HEAD', cwd=self.srcdir).rstrip()
+        b_commit = self.git(['rev-parse', 'HEAD'], cwd=self.srcdir).rstrip()
         self.add_empty_file('c')
         self.assertRevCount(3, cwd=self.srcdir)
 
@@ -1941,7 +2051,7 @@ class GitShallowTest(FetcherTest):
 
         # The 'c' commit was removed entirely, and 'a' was removed from history
         self.assertRevCount(1, ['--all'])
-        self.assertEqual(self.git('rev-parse HEAD').strip(), b_commit)
+        self.assertEqual(self.git(['rev-parse', 'HEAD']).strip(), b_commit)
         assert os.path.exists(os.path.join(self.gitdir, 'a'))
         assert os.path.exists(os.path.join(self.gitdir, 'b'))
         assert not os.path.exists(os.path.join(self.gitdir, 'c'))
@@ -1949,7 +2059,7 @@ class GitShallowTest(FetcherTest):
     def test_shallow_ref_pruning(self):
         self.add_empty_file('a')
         self.add_empty_file('b')
-        self.git('branch a_branch', cwd=self.srcdir)
+        self.git(['branch', 'a_branch'], cwd=self.srcdir)
         self.assertRefs(['master', 'a_branch'], cwd=self.srcdir)
         self.assertRevCount(2, cwd=self.srcdir)
 
@@ -1966,15 +2076,15 @@ class GitShallowTest(FetcherTest):
         bb.utils.mkdirhier(smdir)
         self.git_init(cwd=smdir)
         # Make this look like it was cloned from a remote...
-        self.git('config --add remote.origin.url "%s"' % smdir, cwd=smdir)
-        self.git('config --add remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"', cwd=smdir)
+        self.git(['config', '--add', 'remote.origin.url', '"%s"' % smdir], cwd=smdir)
+        self.git(['config', '--add', 'remote.origin.fetch', '"+refs/heads/*:refs/remotes/origin/*"'], cwd=smdir)
         self.add_empty_file('asub', cwd=smdir)
         self.add_empty_file('bsub', cwd=smdir)
 
-        self.git('submodule init', cwd=self.srcdir)
-        self.git('-c protocol.file.allow=always submodule add file://%s' % smdir, cwd=self.srcdir)
-        self.git('submodule update', cwd=self.srcdir)
-        self.git('commit -m submodule -a', cwd=self.srcdir)
+        self.git(['submodule', 'init'], cwd=self.srcdir)
+        self.git(['-c', 'protocol.file.allow=always', 'submodule', 'add', 'file://%s' % smdir], cwd=self.srcdir)
+        self.git(['submodule', 'update'], cwd=self.srcdir)
+        self.git(['commit', '-m', 'submodule', '-a'], cwd=self.srcdir)
 
         uri = 'gitsm://%s;protocol=file;subdir=${S};branch=master' % self.srcdir
         fetcher, ud = self.fetch_shallow(uri)
@@ -1996,15 +2106,15 @@ class GitShallowTest(FetcherTest):
         bb.utils.mkdirhier(smdir)
         self.git_init(cwd=smdir)
         # Make this look like it was cloned from a remote...
-        self.git('config --add remote.origin.url "%s"' % smdir, cwd=smdir)
-        self.git('config --add remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"', cwd=smdir)
+        self.git(['config', '--add', 'remote.origin.url', '"%s"' % smdir], cwd=smdir)
+        self.git(['config', '--add', 'remote.origin.fetch', '"+refs/heads/*:refs/remotes/origin/*"'], cwd=smdir)
         self.add_empty_file('asub', cwd=smdir)
         self.add_empty_file('bsub', cwd=smdir)
 
-        self.git('submodule init', cwd=self.srcdir)
-        self.git('-c protocol.file.allow=always submodule add file://%s' % smdir, cwd=self.srcdir)
-        self.git('submodule update', cwd=self.srcdir)
-        self.git('commit -m submodule -a', cwd=self.srcdir)
+        self.git(['submodule', 'init'], cwd=self.srcdir)
+        self.git(['-c', 'protocol.file.allow=always', 'submodule', 'add', 'file://%s' % smdir], cwd=self.srcdir)
+        self.git(['submodule', 'update'], cwd=self.srcdir)
+        self.git(['commit', '-m', 'submodule', '-a'], cwd=self.srcdir)
 
         uri = 'gitsm://%s;protocol=file;subdir=${S};branch=master' % self.srcdir
 
@@ -2034,17 +2144,17 @@ class GitShallowTest(FetcherTest):
         def test_shallow_annex(self):
             self.add_empty_file('a')
             self.add_empty_file('b')
-            self.git('annex init', cwd=self.srcdir)
+            self.git(['annex', 'init'], cwd=self.srcdir)
             open(os.path.join(self.srcdir, 'c'), 'w').close()
-            self.git('annex add c', cwd=self.srcdir)
-            self.git('commit --author "Foo Bar <foo@bar>" -m annex-c -a', cwd=self.srcdir)
-            bb.process.run('chmod u+w -R %s' % self.srcdir)
+            self.git(['annex', 'add', 'c'], cwd=self.srcdir)
+            self.git(['commit', '--author', '"Foo Bar <foo@bar>"', '-m', 'annex-c', '-a'], cwd=self.srcdir)
+            bb.process.run(['chmod', 'u+w', '-R', self.srcdir])
 
             uri = 'gitannex://%s;protocol=file;subdir=${S};branch=master' % self.srcdir
             fetcher, ud = self.fetch_shallow(uri)
 
             self.assertRevCount(1)
-            assert './.git/annex/' in bb.process.run('tar -tzf %s' % os.path.join(self.dldir, ud.mirrortarballs[0]))[0]
+            assert './.git/annex/' in bb.process.run(['tar', '-tzf', os.path.join(self.dldir, ud.mirrortarballs[0])])[0]
             assert os.path.exists(os.path.join(self.gitdir, 'c'))
 
     def test_shallow_clone_preferred_over_shallow(self):
@@ -2129,7 +2239,7 @@ class GitShallowTest(FetcherTest):
     def test_shallow_extra_refs(self):
         self.add_empty_file('a')
         self.add_empty_file('b')
-        self.git('branch a_branch', cwd=self.srcdir)
+        self.git(['branch', 'a_branch'], cwd=self.srcdir)
         self.assertRefs(['master', 'a_branch'], cwd=self.srcdir)
         self.assertRevCount(2, cwd=self.srcdir)
 
@@ -2142,8 +2252,8 @@ class GitShallowTest(FetcherTest):
     def test_shallow_extra_refs_wildcard(self):
         self.add_empty_file('a')
         self.add_empty_file('b')
-        self.git('branch a_branch', cwd=self.srcdir)
-        self.git('tag v1.0', cwd=self.srcdir)
+        self.git(['branch', 'a_branch'], cwd=self.srcdir)
+        self.git(['tag', 'v1.0'], cwd=self.srcdir)
         self.assertRefs(['master', 'a_branch', 'v1.0'], cwd=self.srcdir)
         self.assertRevCount(2, cwd=self.srcdir)
 
@@ -2152,6 +2262,36 @@ class GitShallowTest(FetcherTest):
 
         self.assertRefs(['master', 'origin/master', 'v1.0'])
         self.assertRevCount(1)
+
+    def test_shallow_extra_refs_wildcard_shell_quoted(self):
+        self.add_empty_file('a')
+        marker = os.path.join(self.tempdir, 'ref-command-marker')
+        ref = 'refs/tags/poc;touch${IFS}%s' % marker
+        self.git(['update-ref', ref, 'HEAD'], cwd=self.srcdir)
+
+        self.d.setVar('BB_GIT_SHALLOW_EXTRA_REFS', 'refs/tags/*')
+        self.fetch_shallow()
+
+        self.assertFalse(os.path.exists(marker))
+        self.assertRefs(['master', 'origin/master', ref])
+
+    def test_shallow_extra_refs_wildcard_fetch_options(self):
+        self.add_empty_file('a')
+        marker = os.path.join(self.tempdir, 'ref-option-marker')
+        helper = os.path.join(self.tempdir, 'upload-pack-helper')
+        with open(helper, 'w') as f:
+            f.write('#!/bin/sh\n')
+            f.write('touch "%s"\n' % marker)
+            f.write('exec git-upload-pack "$@"\n')
+        os.chmod(helper, 0o755)
+        ref = 'refs/tags/--upload-pack=%s' % helper
+        self.git(['update-ref', ref, 'HEAD'], cwd=self.srcdir)
+
+        self.d.setVar('BB_GIT_SHALLOW_EXTRA_REFS', 'refs/tags/*')
+        self.fetch_shallow()
+
+        self.assertFalse(os.path.exists(marker))
+        self.assertRefs(['master', 'origin/master', ref])
 
     def test_shallow_missing_extra_refs(self):
         self.add_empty_file('a')
@@ -2172,14 +2312,14 @@ class GitShallowTest(FetcherTest):
         # Create initial git repo
         self.add_empty_file('a')
         self.add_empty_file('b')
-        self.git('checkout -b a_branch', cwd=self.srcdir)
+        self.git(['checkout', '-b', 'a_branch'], cwd=self.srcdir)
         self.add_empty_file('c')
         self.add_empty_file('d')
-        self.git('checkout master', cwd=self.srcdir)
-        self.git('tag v0.0 a_branch', cwd=self.srcdir)
+        self.git(['checkout', 'master'], cwd=self.srcdir)
+        self.git(['tag', 'v0.0', 'a_branch'], cwd=self.srcdir)
         self.add_empty_file('e')
-        self.git('merge --no-ff --no-edit a_branch', cwd=self.srcdir)
-        self.git('branch -d a_branch', cwd=self.srcdir)
+        self.git(['merge', '--no-ff', '--no-edit', 'a_branch'], cwd=self.srcdir)
+        self.git(['branch', '-d', 'a_branch'], cwd=self.srcdir)
         self.add_empty_file('f')
         self.assertRevCount(7, cwd=self.srcdir)
 
@@ -2204,7 +2344,7 @@ class GitShallowTest(FetcherTest):
         self.add_empty_file('a')
         self.add_empty_file('b')
         fetcher, ud = self.fetch(self.d.getVar('SRC_URI'))
-        self.git('tag v0.0 master', cwd=self.srcdir)
+        self.git(['tag', 'v0.0', 'master'], cwd=self.srcdir)
         self.d.setVar('BB_GIT_SHALLOW_DEPTH', '0')
         self.d.setVar('BB_GIT_SHALLOW_REVS', 'v0.0')
 
@@ -2252,9 +2392,9 @@ class GitShallowTest(FetcherTest):
 
     @skipIfNoNetwork()
     def test_bitbake(self):
-        self.git('remote add --mirror=fetch origin https://github.com/openembedded/bitbake', cwd=self.srcdir)
-        self.git('config core.bare true', cwd=self.srcdir)
-        self.git('fetch', cwd=self.srcdir)
+        self.git(['remote', 'add', '--mirror=fetch', 'origin', 'https://github.com/openembedded/bitbake'], cwd=self.srcdir)
+        self.git(['config', 'core.bare', 'true'], cwd=self.srcdir)
+        self.git(['fetch'], cwd=self.srcdir)
 
         self.d.setVar('BB_GIT_SHALLOW_DEPTH', '0')
         # Note that the 1.10.0 tag is annotated, so this also tests
@@ -2264,8 +2404,8 @@ class GitShallowTest(FetcherTest):
         self.fetch_shallow()
 
         # Confirm that the history of 1.10.0 was removed
-        orig_revs = len(self.git('rev-list master', cwd=self.srcdir).splitlines())
-        revs = len(self.git('rev-list master').splitlines())
+        orig_revs = len(self.git(['rev-list', 'master'], cwd=self.srcdir).splitlines())
+        revs = len(self.git(['rev-list', 'master']).splitlines())
         self.assertNotEqual(orig_revs, revs)
         self.assertRefs(['master', 'origin/master'])
         self.assertRevCount(orig_revs - 1760)
@@ -2297,10 +2437,10 @@ class GitShallowTest(FetcherTest):
     def test_shallow_succeeds_with_tag_containing_slash(self):
         self.add_empty_file('a')
         self.add_empty_file('b')
-        self.git('tag t1/t2/t3', cwd=self.srcdir)
+        self.git(['tag', 't1/t2/t3'], cwd=self.srcdir)
         self.assertRevCount(2, cwd=self.srcdir)
 
-        srcrev = self.git('rev-parse HEAD', cwd=self.srcdir).strip()
+        srcrev = self.git(['rev-parse', 'HEAD'], cwd=self.srcdir).strip()
         self.d.setVar('SRCREV', srcrev)
         uri = self.d.getVar('SRC_URI').split()[0]
         uri = '%s;tag=t1/t2/t3' % uri
@@ -2662,18 +2802,18 @@ class FetchLocallyMissingTagFromRemote(FetcherTest):
         # then add a tag to this repo, and fetch it again, without
         # changing SRC_REV, but by adding ';tag=tag1` to SRC_URI
         # the new tag should be fetched and unpacked
-        srcrev = self.git('rev-parse HEAD', cwd=self.srcdir).strip()
+        srcrev = self.git(['rev-parse', 'HEAD'], cwd=self.srcdir).strip()
         self.d.setVar('SRCREV', srcrev)
         src_uri = self.d.getVar('SRC_URI')
         self._fetch_and_unpack(src_uri)
 
-        self.git('tag -m -a tag1', cwd=self.srcdir)
+        self.git(['tag', '-m', '-a', 'tag1'], cwd=self.srcdir)
 
         src_uri = '%s;tag=tag1' % self.d.getVar('SRC_URI').split()[0]
         self.d.setVar('SRC_URI', src_uri)
         self._fetch_and_unpack(src_uri)
 
-        output = self.git('log --pretty=oneline -n 1 refs/tags/tag1', cwd=self.gitdir)
+        output = self.git(['log', '--pretty=oneline', '-n', '1', 'refs/tags/tag1'], cwd=self.gitdir)
         assert "fatal: ambiguous argument" not in output
 
 
@@ -3414,25 +3554,25 @@ class FetchPremirroronlyLocalTest(FetcherTest):
         self.git_init(cwd=self.gitdir)
         for i in range(0):
             self.git_new_commit()
-        bb.process.run('tar -czvf {} .'.format(os.path.join(self.mirrordir, self.mirrorname)), cwd =  self.gitdir)
+        bb.process.run(['tar', '-czvf', os.path.join(self.mirrordir, self.mirrorname), '.'], cwd=self.gitdir)
 
     def git_new_commit(self):
         import random
         os.unlink(os.path.join(self.mirrordir, self.mirrorname))
-        branch = self.git("branch --show-current", self.gitdir).split()
+        branch = self.git(["branch", "--show-current"], self.gitdir).split()
         with open(os.path.join(self.gitdir, self.testfilename), "w") as testfile:
             testfile.write("File {} from branch {}; Useless random data {}".format(self.testfilename, branch, random.random()))
-        self.git("add {}".format(self.testfilename), self.gitdir)
-        self.git("commit -a -m \"This random commit {} in branch {}. I'm useless.\"".format(random.random(), branch), self.gitdir)
-        bb.process.run('tar -czvf {} .'.format(os.path.join(self.mirrordir, self.mirrorname)), cwd =  self.gitdir)
-        return self.git("rev-parse HEAD", self.gitdir).strip()
+        self.git(['add', self.testfilename], self.gitdir)
+        self.git(['commit', '-a', '-m', "\"This random commit {} in branch {}. I'm useless.\"".format(random.random(), branch)], self.gitdir)
+        bb.process.run(['tar', '-czvf', os.path.join(self.mirrordir, self.mirrorname), '.'], cwd=self.gitdir)
+        return self.git(["rev-parse", "HEAD"], self.gitdir).strip()
 
     def git_new_branch(self, name):
         self.git_new_commit()
-        head = self.git("rev-parse HEAD", self.gitdir).strip()
-        self.git("checkout -b {}".format(name), self.gitdir)
+        head = self.git(["rev-parse", "HEAD"], self.gitdir).strip()
+        self.git(["checkout", "-b", name], self.gitdir)
         newrev = self.git_new_commit()
-        self.git("checkout {}".format(head), self.gitdir)
+        self.git(["checkout", head], self.gitdir)
         return newrev
 
     def test_mirror_multiple_fetches(self):
@@ -3483,6 +3623,7 @@ class FetchPremirroronlyNetworkTest(FetcherTest):
         self.reponame = "fstests"
         self.clonedir = os.path.join(self.tempdir, "git")
         self.gitdir = os.path.join(self.tempdir, "git", "{}.git".format(self.reponame))
+        self.giturl = "https://git.yoctoproject.org/fstests"
         self.recipe_url = "git://git.yoctoproject.org/fstests;protocol=https;branch=master"
         self.d.setVar("BB_FETCH_PREMIRRORONLY", "1")
         self.d.setVar("BB_NO_NETWORK", "0")
@@ -3491,9 +3632,9 @@ class FetchPremirroronlyNetworkTest(FetcherTest):
     def make_git_repo(self):
         self.mirrorname = "git2_git.yoctoproject.org.fstests.tar.gz"
         os.makedirs(self.clonedir)
-        self.git("clone --bare {}".format(self.recipe_url), self.clonedir)
-        self.git("update-ref HEAD 15413486df1f5a5b5af699b6f3ba5f0984e52a9f", self.gitdir)
-        bb.process.run('tar -czvf {} .'.format(os.path.join(self.mirrordir, self.mirrorname)), cwd =  self.gitdir)
+        self.git(["clone", "--bare", self.giturl], self.clonedir)
+        self.git(["update-ref", "HEAD", "15413486df1f5a5b5af699b6f3ba5f0984e52a9f"], self.gitdir)
+        bb.process.run(['tar', '-czvf', os.path.join(self.mirrordir, self.mirrorname), '.'], cwd=self.gitdir)
         shutil.rmtree(self.clonedir)
 
     @skipIfNoNetwork()
@@ -3793,3 +3934,562 @@ class GoModGitTest(FetcherTest):
         self.assertTrue(os.path.exists(os.path.join(downloaddir, 'go.opencensus.io/@v/v0.24.0.mod')))
         self.assertEqual(bb.utils.sha256_file(os.path.join(downloaddir, 'go.opencensus.io/@v/v0.24.0.mod')),
                          '0dc9ccc660ad21cebaffd548f2cc6efa27891c68b4fbc1f8a3893b00f1acec96')
+
+
+class GitUnpackUpdateTest(FetcherTest):
+    """Test the unpack_update functionality for git fetcher.
+
+    Intended workflow
+    1. First-time setup:
+       1. download()  - clones the upstream repo into DL_DIR/git2/... (clonedir).
+       2. unpack()    - clones from clonedir into the workspace (S/workdir) and
+                        registers a 'dldir' git remote pointing at
+                        file://DL_DIR/git2/... for later offline use.
+
+    2. Subsequent updates (what unpack_update is designed for):
+       1. The user works in the unpacked source tree.
+       2. Upstream advances - SRCREV changes in the recipe.
+       3. download()        - fetches the new revision into the local clonedir.
+       4. unpack_update()   - instead of wiping the workspace and re-cloning:
+           * fetches the new revision from the local 'dldir' remote
+           * rebases the user's local commits on top of the new SRCREV
+           * raises LocalModificationsError if uncommitted changes block the
+             update, RebaseError if local commits cannot be rebased, or a
+             plain UnpackError for other failures (shallow clone, stale dldir);
+             in all cases the caller (e.g. bitbake-setup) can fall back to
+             backup + re-clone.
+
+    Key design constraints:
+      * unpack_update() never deletes existing data (unlike unpack()).
+      * Only staged/modified tracked files block the update; untracked files and
+        committed local work are handled gracefully.
+      * The 'dldir' remote is intentionally visible to users outside the
+        fetcher (e.g. for manual 'git log dldir/master').
+      * Currently only git is supported.
+    """
+
+    def setUp(self):
+        """Set up a local bare git source repository with two commits on 'master'.
+
+        self.initial_rev  - the first commit (testfile.txt: 'initial content')
+        self.updated_rev  - the second commit (testfile.txt: 'updated content')
+
+        SRCREV is initialised to self.initial_rev so individual tests can
+        advance it to self.updated_rev (or create further commits) as needed.
+        """
+        FetcherTest.setUp(self)
+
+        self.gitdir = os.path.join(self.tempdir, 'gitrepo')
+        self.srcdir = os.path.join(self.tempdir, 'gitsource')
+
+        self.d.setVar('WORKDIR', self.tempdir)
+        self.d.setVar('S', self.gitdir)
+        self.d.delVar('PREMIRRORS')
+        self.d.delVar('MIRRORS')
+
+        # Create a source git repository
+        bb.utils.mkdirhier(self.srcdir)
+        self.git_init(cwd=self.srcdir)
+
+        # Create initial commit
+        with open(os.path.join(self.srcdir, 'testfile.txt'), 'w') as f:
+            f.write('initial content\n')
+        self.git(['add', 'testfile.txt'], cwd=self.srcdir)
+        self.git(['commit', '-m', 'Initial commit'], cwd=self.srcdir)
+        self.initial_rev = self.git(['rev-parse', 'HEAD'], cwd=self.srcdir).strip()
+
+        # Create a second commit
+        with open(os.path.join(self.srcdir, 'testfile.txt'), 'w') as f:
+            f.write('updated content\n')
+        self.git(['add', 'testfile.txt'], cwd=self.srcdir)
+        self.git(['commit', '-m', 'Update commit'], cwd=self.srcdir)
+        self.updated_rev = self.git(['rev-parse', 'HEAD'], cwd=self.srcdir).strip()
+
+        self.d.setVar('SRCREV', self.initial_rev)
+        self.d.setVar('SRC_URI', 'git://%s;branch=master;protocol=file' % self.srcdir)
+
+    def test_unpack_update_full_clone(self):
+        """Test that unpack_update updates an existing checkout in place for a full clone.
+
+        Steps:
+        1. Fetch and unpack at self.initial_rev - verify 'initial content'.
+        2. Advance SRCREV to self.updated_rev and re-download.
+        3. Call unpack_update() instead of unpack() - the existing checkout
+           must be updated via 'git fetch dldir' + 'git rebase' without
+           re-cloning the directory.
+        4. Verify testfile.txt now contains 'updated content'.
+        """
+        # First fetch at initial revision
+        fetcher = bb.fetch2.Fetch([self.d.getVar('SRC_URI')], self.d)
+        fetcher.download()
+        fetcher.unpack(self.unpackdir)
+
+        # Verify initial state
+        unpack_path = os.path.join(self.unpackdir, 'git')
+        self.assertTrue(os.path.exists(os.path.join(unpack_path, 'testfile.txt')))
+        with open(os.path.join(unpack_path, 'testfile.txt'), 'r') as f:
+            self.assertEqual(f.read(), 'initial content\n')
+
+        # Update to new revision
+        self.d.setVar('SRCREV', self.updated_rev)
+        fetcher = bb.fetch2.Fetch([self.d.getVar('SRC_URI')], self.d)
+        fetcher.download()
+
+        # Use unpack_update
+        uri = self.d.getVar('SRC_URI')
+        ud = fetcher.ud[uri]
+        git_fetcher = ud.method
+        git_fetcher.unpack_update(ud, self.unpackdir, self.d)
+
+        # Verify updated state
+        with open(os.path.join(unpack_path, 'testfile.txt'), 'r') as f:
+            self.assertEqual(f.read(), 'updated content\n')
+
+    def test_unpack_update_dldir_remote_setup(self):
+        """Test that unpack() adds a 'dldir' git remote pointing at ud.clonedir.
+
+        The 'dldir' remote is used by subsequent unpack_update() calls to fetch
+        new commits from the local download cache (${DL_DIR}/git2/…) without
+        requiring network access. After a normal unpack the remote must exist
+        and its URL must be 'file://<ud.clonedir>'.
+        """
+        # First fetch
+        fetcher = bb.fetch2.Fetch([self.d.getVar('SRC_URI')], self.d)
+        fetcher.download()
+
+        uri = self.d.getVar('SRC_URI')
+        ud = fetcher.ud[uri]
+
+        fetcher.unpack(self.unpackdir)
+
+        unpack_path = os.path.join(self.unpackdir, 'git')
+
+        # Check that dldir remote exists
+        remotes = self.git(['remote'], cwd=unpack_path).strip().split('\n')
+        self.assertIn('dldir', remotes)
+
+        # Verify it points to the clonedir
+        dldir_url = self.git(['remote', 'get-url', 'dldir'], cwd=unpack_path).strip()
+        self.assertEqual(dldir_url, 'file://{}'.format(ud.clonedir))
+
+    def test_unpack_update_ff_with_local_changes(self):
+        """Test that unpack_update rebases local commits fast forward.
+
+        Full workflow:
+        1. Fetch + unpack at initial_rev - verify 'dldir' remote is created
+           pointing at ud.clonedir.
+        2. Add a local commit touching localfile.txt.
+        3. Advance SRCREV to updated_rev and call download() - verify that
+           ud.clonedir (the dldir bare clone) now contains updated_rev.
+        4. Call unpack_update() - it fetches updated_rev from dldir into the
+           working tree and rebases the local commit on top.
+        5. Verify the final commit graph: HEAD's parent is updated_rev, and
+           both testfile.txt ('updated content') and localfile.txt ('local
+           change') are present.
+
+        Note: git rebase operates the same way regardless of whether HEAD is
+        detached or on a named branch (e.g. 'master' or a local feature branch),
+        so this test covers those scenarios implicitly.
+        """
+        # Step 1 - fetch + unpack at initial_rev
+        fetcher = bb.fetch2.Fetch([self.d.getVar('SRC_URI')], self.d)
+        fetcher.download()
+        fetcher.unpack(self.unpackdir)
+
+        uri = self.d.getVar('SRC_URI')
+        ud = fetcher.ud[uri]
+        unpack_path = os.path.join(self.unpackdir, 'git')
+
+        # The normal unpack must have set up the 'dldir' remote pointing at
+        # ud.clonedir so that subsequent unpack_update() calls work offline.
+        dldir_url = self.git(['remote', 'get-url', 'dldir'], cwd=unpack_path).strip()
+        self.assertEqual(dldir_url, 'file://{}'.format(ud.clonedir))
+
+        # Step 2 - add a local commit that touches a new file
+        with open(os.path.join(unpack_path, 'localfile.txt'), 'w') as f:
+            f.write('local change\n')
+        self.git(['add', 'localfile.txt'], cwd=unpack_path)
+        self.git(['commit', '-m', 'Local commit'], cwd=unpack_path)
+        local_commit = self.git(['rev-parse', 'HEAD'], cwd=unpack_path).strip()
+
+        # Step 3 - advance SRCREV and download; clonedir must now contain
+        # updated_rev so that unpack_update can fetch it without network access.
+        self.d.setVar('SRCREV', self.updated_rev)
+        fetcher = bb.fetch2.Fetch([self.d.getVar('SRC_URI')], self.d)
+        fetcher.download()
+
+        ud = fetcher.ud[uri]
+        clonedir_refs = self.git(['rev-parse', self.updated_rev], cwd=ud.clonedir).strip()
+        self.assertEqual(clonedir_refs, self.updated_rev,
+                         "clonedir must contain updated_rev after download()")
+
+        # Step 4 - unpack_update fetches from dldir and rebases
+        git_fetcher = ud.method
+        git_fetcher.unpack_update(ud, self.unpackdir, self.d)
+
+        # Step 5 - verify the commit graph and working tree content
+        # HEAD is the rebased local commit; its parent must be updated_rev
+        head_rev = self.git(['rev-parse', 'HEAD'], cwd=unpack_path).strip()
+        parent_rev = self.git(['rev-parse', 'HEAD^'], cwd=unpack_path).strip()
+        self.assertNotEqual(head_rev, local_commit,
+                            "local commit should have a new SHA after rebase")
+        self.assertEqual(parent_rev, self.updated_rev,
+                         "HEAD's parent must be updated_rev after fast-forward rebase")
+
+        with open(os.path.join(unpack_path, 'testfile.txt'), 'r') as f:
+            self.assertEqual(f.read(), 'updated content\n')
+        with open(os.path.join(unpack_path, 'localfile.txt'), 'r') as f:
+            self.assertEqual(f.read(), 'local change\n')
+
+    def test_unpack_update_already_at_target_revision(self):
+        """Test that unpack_update is a no-op when the checkout is already at SRCREV.
+
+        Calling unpack_update() without advancing SRCREV must succeed and leave
+        the working tree unchanged. No rebase should be attempted because the
+        checkout already points at ud.revision.
+        """
+        fetcher = bb.fetch2.Fetch([self.d.getVar('SRC_URI')], self.d)
+        fetcher.download()
+        fetcher.unpack(self.unpackdir)
+
+        unpack_path = os.path.join(self.unpackdir, 'git')
+        with open(os.path.join(unpack_path, 'testfile.txt')) as f:
+            self.assertEqual(f.read(), 'initial content\n')
+
+        # Call unpack_update with SRCREV still at initial_rev - no upstream change
+        uri = self.d.getVar('SRC_URI')
+        ud = fetcher.ud[uri]
+        git_fetcher = ud.method
+        result = git_fetcher.unpack_update(ud, self.unpackdir, self.d)
+        self.assertTrue(result)
+
+        # Content must be unchanged
+        with open(os.path.join(unpack_path, 'testfile.txt')) as f:
+            self.assertEqual(f.read(), 'initial content\n')
+
+    def test_unpack_update_with_untracked_file(self):
+        """Test that unpack_update succeeds when the checkout has an untracked file.
+
+        The status check uses '--untracked-files=no', so untracked files are not
+        detected and do not trigger the fallback path. git rebase also leaves
+        untracked files untouched, so both the upstream update and the untracked
+        file must be present after the call.
+        """
+        fetcher = bb.fetch2.Fetch([self.d.getVar('SRC_URI')], self.d)
+        fetcher.download()
+        fetcher.unpack(self.unpackdir)
+
+        unpack_path = os.path.join(self.unpackdir, 'git')
+
+        # Create an untracked file (not staged, not committed)
+        untracked = os.path.join(unpack_path, 'untracked.txt')
+        with open(untracked, 'w') as f:
+            f.write('untracked content\n')
+
+        # Update to new upstream revision
+        self.d.setVar('SRCREV', self.updated_rev)
+        fetcher = bb.fetch2.Fetch([self.d.getVar('SRC_URI')], self.d)
+        fetcher.download()
+
+        uri = self.d.getVar('SRC_URI')
+        ud = fetcher.ud[uri]
+        git_fetcher = ud.method
+
+        # --untracked-files=no means the status check passes; rebase preserves the file
+        git_fetcher.unpack_update(ud, self.unpackdir, self.d)
+
+        with open(os.path.join(unpack_path, 'testfile.txt'), 'r') as f:
+            self.assertEqual(f.read(), 'updated content\n')
+
+        # Untracked file must survive the rebase
+        self.assertTrue(os.path.exists(untracked))
+        with open(untracked, 'r') as f:
+            self.assertEqual(f.read(), 'untracked content\n')
+
+    def test_unpack_update_with_staged_changes(self):
+        """Test that unpack_update fails when the checkout has staged (but not committed) changes.
+
+        The rebase is run with --no-autostash so git refuses to rebase over a
+        dirty index. The caller (bitbake-setup) is expected to catch the
+        resulting LocalModificationsError and fall back to backup + re-fetch.
+        """
+        fetcher = bb.fetch2.Fetch([self.d.getVar('SRC_URI')], self.d)
+        fetcher.download()
+        fetcher.unpack(self.unpackdir)
+
+        unpack_path = os.path.join(self.unpackdir, 'git')
+
+        # Stage a new file without committing it
+        staged = os.path.join(unpack_path, 'staged.txt')
+        with open(staged, 'w') as f:
+            f.write('staged content\n')
+        self.git(['add', 'staged.txt'], cwd=unpack_path)
+
+        # Update to new upstream revision
+        self.d.setVar('SRCREV', self.updated_rev)
+        fetcher = bb.fetch2.Fetch([self.d.getVar('SRC_URI')], self.d)
+        fetcher.download()
+
+        uri = self.d.getVar('SRC_URI')
+        ud = fetcher.ud[uri]
+        git_fetcher = ud.method
+
+        # Should fail - git rebase refuses to run with a dirty index
+        with self.assertRaises(bb.fetch2.LocalModificationsError):
+            git_fetcher.unpack_update(ud, self.unpackdir, self.d)
+
+    def test_unpack_update_with_modified_tracked_file(self):
+        """Test that unpack_update fails when a tracked file has unstaged modifications.
+
+        'git status --untracked-files=no --porcelain' reports unstaged modifications
+        to tracked files (output line ' M filename'), which must block the update so
+        the caller can fall back to backup + re-fetch rather than silently discarding
+        work in progress.
+        """
+        fetcher = bb.fetch2.Fetch([self.d.getVar('SRC_URI')], self.d)
+        fetcher.download()
+        fetcher.unpack(self.unpackdir)
+
+        unpack_path = os.path.join(self.unpackdir, 'git')
+
+        # Modify a tracked file without staging or committing
+        with open(os.path.join(unpack_path, 'testfile.txt'), 'w') as f:
+            f.write('locally modified content\n')
+
+        # Update to new upstream revision
+        self.d.setVar('SRCREV', self.updated_rev)
+        fetcher = bb.fetch2.Fetch([self.d.getVar('SRC_URI')], self.d)
+        fetcher.download()
+
+        uri = self.d.getVar('SRC_URI')
+        ud = fetcher.ud[uri]
+        git_fetcher = ud.method
+
+        # Should fail - unstaged modification to tracked file is detected by
+        # 'git status --untracked-files=no --porcelain'
+        with self.assertRaises(bb.fetch2.LocalModificationsError):
+            git_fetcher.unpack_update(ud, self.unpackdir, self.d)
+
+    def test_unpack_update_conflict_raises_rebase_error(self):
+        """Test that unpack_update raises RebaseError on a rebase conflict.
+
+        When a local commit modifies the same lines as an incoming upstream commit,
+        git rebase cannot resolve the conflict automatically. unpack_update must
+        abort the failed rebase and raise RebaseError so the caller can fall back
+        to a backup + re-fetch.
+        """
+        # Fetch and unpack at the initial revision
+        fetcher = bb.fetch2.Fetch([self.d.getVar('SRC_URI')], self.d)
+        fetcher.download()
+        fetcher.unpack(self.unpackdir)
+
+        unpack_path = os.path.join(self.unpackdir, 'git')
+
+        # Make a local commit that edits the same lines as the upcoming upstream commit
+        with open(os.path.join(unpack_path, 'testfile.txt'), 'w') as f:
+            f.write('conflicting local content\n')
+        self.git(['add', 'testfile.txt'], cwd=unpack_path)
+        self.git(['commit', '-m', 'Local conflicting commit'], cwd=unpack_path)
+
+        # Add a third upstream commit that also edits testfile.txt differently
+        with open(os.path.join(self.srcdir, 'testfile.txt'), 'w') as f:
+            f.write('conflicting upstream content\n')
+        self.git(['add', 'testfile.txt'], cwd=self.srcdir)
+        self.git(['commit', '-m', 'Upstream conflicting commit'], cwd=self.srcdir)
+        conflict_rev = self.git(['rev-parse', 'HEAD'], cwd=self.srcdir).strip()
+
+        # Update SRCREV to the new upstream commit
+        self.d.setVar('SRCREV', conflict_rev)
+        fetcher = bb.fetch2.Fetch([self.d.getVar('SRC_URI')], self.d)
+        fetcher.download()
+
+        uri = self.d.getVar('SRC_URI')
+        ud = fetcher.ud[uri]
+        git_fetcher = ud.method
+
+        # unpack_update must fail and clean up (rebase --abort) rather than
+        # leaving the repo in a mid-rebase state
+        with self.assertRaises(bb.fetch2.RebaseError):
+            git_fetcher.unpack_update(ud, self.unpackdir, self.d)
+
+        # Verify the repo is not left in a conflicted / mid-rebase state
+        rebase_merge = os.path.join(unpack_path, '.git', 'rebase-merge')
+        rebase_apply = os.path.join(unpack_path, '.git', 'rebase-apply')
+        self.assertFalse(os.path.exists(rebase_merge),
+                         "rebase-merge dir should not exist after failed unpack_update")
+        self.assertFalse(os.path.exists(rebase_apply),
+                         "rebase-apply dir should not exist after failed unpack_update")
+
+    def test_unpack_update_untracked_file_overwritten_by_upstream(self):
+        """Test that unpack_update raises RebaseError when an untracked file would be
+        overwritten by an incoming upstream commit.
+
+        We skip untracked files in the pre-check (git rebase doesn't touch harmless
+        untracked files), but git itself refuses to rebase when an untracked file would
+        be overwritten by the incoming changes. The resulting FetchError must be caught
+        and re-raised as RebaseError without leaving the repo in a mid-rebase state.
+
+        Two sub-cases are covered:
+        - top-level untracked file clashing with an incoming upstream file
+        - untracked file inside a subdirectory (xxx/somefile) clashing with an
+          upstream commit that adds the same path
+        """
+        def _run_case(upstream_path, local_rel_path, commit_msg):
+            """
+            Add upstream_path to self.srcdir, create local_rel_path as an
+            untracked file in the checkout, then assert that unpack_update
+            raises RebaseError and leaves no mid-rebase state, and that the
+            local file is untouched.
+            """
+            # Fresh fetch + unpack at the current SRCREV
+            fetcher = bb.fetch2.Fetch([self.d.getVar('SRC_URI')], self.d)
+            fetcher.download()
+            fetcher.unpack(self.unpackdir)
+
+            unpack_path = os.path.join(self.unpackdir, 'git')
+
+            # Upstream adds the file (potentially inside a subdirectory)
+            full_upstream = os.path.join(self.srcdir, upstream_path)
+            os.makedirs(os.path.dirname(full_upstream), exist_ok=True)
+            with open(full_upstream, 'w') as f:
+                f.write('upstream content\n')
+            self.git(['add', upstream_path], cwd=self.srcdir)
+            self.git(['commit', '-m', commit_msg], cwd=self.srcdir)
+            new_rev = self.git(['rev-parse', 'HEAD'], cwd=self.srcdir).strip()
+
+            # Create the clashing untracked file in the checkout
+            full_local = os.path.join(unpack_path, local_rel_path)
+            os.makedirs(os.path.dirname(full_local), exist_ok=True)
+            with open(full_local, 'w') as f:
+                f.write('local untracked content\n')
+
+            self.d.setVar('SRCREV', new_rev)
+            fetcher = bb.fetch2.Fetch([self.d.getVar('SRC_URI')], self.d)
+            fetcher.download()
+
+            uri = self.d.getVar('SRC_URI')
+            ud = fetcher.ud[uri]
+            git_fetcher = ud.method
+
+            # git rebase refuses because the untracked file would be overwritten
+            with self.assertRaises(bb.fetch2.RebaseError):
+                git_fetcher.unpack_update(ud, self.unpackdir, self.d)
+
+            # Repo must not be left in a mid-rebase state
+            self.assertFalse(os.path.exists(os.path.join(unpack_path, '.git', 'rebase-merge')))
+            self.assertFalse(os.path.exists(os.path.join(unpack_path, '.git', 'rebase-apply')))
+
+            # The local untracked file must be untouched
+            self.assertTrue(os.path.exists(full_local))
+            with open(full_local) as f:
+                self.assertEqual(f.read(), 'local untracked content\n')
+
+            # Reset unpackdir for the next sub-case
+            import shutil as _shutil
+            _shutil.rmtree(self.unpackdir)
+            os.makedirs(self.unpackdir)
+
+        # Sub-case 1: top-level file clash
+        _run_case('newfile.txt', 'newfile.txt',
+                  'Upstream adds newfile.txt')
+
+        # Sub-case 2: file inside a subdirectory (xxx/somefile)
+        _run_case('xxx/somefile.txt', 'xxx/somefile.txt',
+                  'Upstream adds xxx/somefile.txt')
+
+    def test_unpack_update_shallow_clone_fails(self):
+        """Test that unpack_update raises UnpackError for shallow-tarball checkouts.
+
+        Shallow clones lack full history, which makes an in-place rebase impossible
+        without network access. After fetching with BB_GIT_SHALLOW=1 the clonedir
+        is deleted so that unpack() is forced to use the shallow tarball.
+        A subsequent call to unpack_update() must raise UnpackError and the message
+        must mention 'shallow clone' so callers can distinguish this case.
+        """
+        self.d.setVar('BB_GIT_SHALLOW', '1')
+        self.d.setVar('BB_GENERATE_SHALLOW_TARBALLS', '1')
+
+        # First fetch at initial revision
+        fetcher = bb.fetch2.Fetch([self.d.getVar('SRC_URI')], self.d)
+        fetcher.download()
+
+        # Remove clonedir to force use of shallow tarball
+        clonedir = os.path.join(self.dldir, 'git2')
+        if os.path.exists(clonedir):
+            shutil.rmtree(clonedir)
+
+        fetcher.unpack(self.unpackdir)
+
+        # Update to new revision
+        self.d.setVar('SRCREV', self.updated_rev)
+        fetcher = bb.fetch2.Fetch([self.d.getVar('SRC_URI')], self.d)
+        fetcher.download()
+
+        # unpack_update should fail for shallow clones
+        uri = self.d.getVar('SRC_URI')
+        ud = fetcher.ud[uri]
+        git_fetcher = ud.method
+
+        with self.assertRaises(bb.fetch2.UnpackError) as context:
+            git_fetcher.unpack_update(ud, self.unpackdir, self.d)
+
+        self.assertIn("shallow clone", str(context.exception).lower())
+
+    def test_unpack_update_stale_dldir_remote(self):
+        """Test that unpack_update raises UnpackError when the dldir remote URL is stale.
+
+        If the clonedir has been removed after the initial unpack (e.g. DL_DIR was
+        cleaned) the 'dldir' remote URL no longer resolves. The fetch inside
+        update_mode will fail with a FetchError which must be re-raised as
+        UnpackError so the caller can fall back to a full re-fetch.
+        """
+        fetcher = bb.fetch2.Fetch([self.d.getVar('SRC_URI')], self.d)
+        fetcher.download()
+        fetcher.unpack(self.unpackdir)
+
+        unpack_path = os.path.join(self.unpackdir, 'git')
+
+        # Advance SRCREV to trigger update_mode
+        self.d.setVar('SRCREV', self.updated_rev)
+        fetcher = bb.fetch2.Fetch([self.d.getVar('SRC_URI')], self.d)
+        fetcher.download()
+
+        uri = self.d.getVar('SRC_URI')
+        ud = fetcher.ud[uri]
+
+        # Delete the clonedir and corrupt the dldir remote URL so that
+        # 'git fetch dldir' fails, simulating a missing or relocated DL_DIR.
+        shutil.rmtree(ud.clonedir)
+        self.git(['remote', 'set-url', 'dldir', 'file://' + ud.clonedir],
+                 cwd=unpack_path)
+
+        git_fetcher = ud.method
+        with self.assertRaises(bb.fetch2.UnpackError):
+            git_fetcher.unpack_update(ud, self.unpackdir, self.d)
+
+    def test_fetch_unpack_update_toplevel_api(self):
+        """Test that the top-level Fetch.unpack_update() dispatches to Git.unpack_update().
+
+        Callers such as bitbake-setup use fetcher.unpack_update(root) rather than
+        calling the method on the Git fetcher directly. Verify that the public API
+        works end-to-end: fetch at initial_rev, unpack, advance to updated_rev,
+        fetch again, then call fetcher.unpack_update(root) and confirm the content
+        is updated.
+        """
+        fetcher = bb.fetch2.Fetch([self.d.getVar('SRC_URI')], self.d)
+        fetcher.download()
+        fetcher.unpack(self.unpackdir)
+
+        unpack_path = os.path.join(self.unpackdir, 'git')
+        with open(os.path.join(unpack_path, 'testfile.txt')) as f:
+            self.assertEqual(f.read(), 'initial content\n')
+
+        self.d.setVar('SRCREV', self.updated_rev)
+        fetcher = bb.fetch2.Fetch([self.d.getVar('SRC_URI')], self.d)
+        fetcher.download()
+
+        # Use the public Fetch.unpack_update() rather than the method directly
+        fetcher.unpack_update(self.unpackdir)
+
+        with open(os.path.join(unpack_path, 'testfile.txt')) as f:
+            self.assertEqual(f.read(), 'updated content\n')

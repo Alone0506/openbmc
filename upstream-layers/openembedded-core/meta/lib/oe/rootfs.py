@@ -25,8 +25,7 @@ class Rootfs(object, metaclass=ABCMeta):
         self.deploydir = self.d.getVar('IMGDEPLOYDIR')
         self.progress_reporter = progress_reporter
         self.logcatcher = logcatcher
-
-        self.install_order = Manifest.INSTALL_ORDER
+        self.warn_check_regex = r'^(warn|Warn|WARNING:)'
 
     @abstractmethod
     def _create(self):
@@ -84,7 +83,7 @@ class Rootfs(object, metaclass=ABCMeta):
                 bb.warn(msg)
 
     def _log_check_warn(self):
-        self._log_check_common('warning', '^(warn|Warn|WARNING:)')
+        self._log_check_common('warning', self.warn_check_regex)
 
     def _log_check_error(self):
         self._log_check_common('error', self.log_check_regex)

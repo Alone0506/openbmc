@@ -1,4 +1,4 @@
-image: ${MIRROR_GHCR}/siemens/kas/kas:4.7
+image: ${MIRROR_GHCR}/siemens/kas/kas:5.2
 
 variables:
   # These are needed as the k8s executor doesn't respect the container
@@ -9,14 +9,16 @@ variables:
   CPU_REQUEST: ""
   # The default machine tag for the build jobs
   DEFAULT_TAG: ""
-  # The directory to use as the persistent cache (the root for DL_DIR, SSTATE_DIR, etc)
-  CACHE_DIR: $CI_BUILDS_DIR/persist
+  # The directory to use as the persistent cache (the root for DL_DIR,
+  # SSTATE_DIR, etc). The default is the build tree which will not be
+  # persistent, so this should be set in the runner.
+  CACHE_DIR: $CI_PROJECT_DIR
   # The container mirror to use
   MIRROR_GHCR: ghcr.io
   # The list of extra Kas fragments to be used when building
   EXTRA_KAS_FILES: ""
-  # The NVD API key to use when fetching CVEs
-  NVDCVE_API_KEY: ""
+  # Whether warnings should be fatal (0/1)
+  FATAL_WARNINGS: 0
 
 stages:
   - prep
@@ -61,13 +63,15 @@ stages:
     # Catch all for everything else
     - if: '$KERNEL != "linux-yocto-dev"'
   script:
-    - KASFILES=$(./ci/jobs-to-kas "$CI_JOB_NAME" $EXTRA_KAS_FILES):lockfile.yml
-    - echo KASFILES=$KASFILES
-    - kas dump --update --force-checkout --resolve-refs --resolve-env $KASFILES
-    - kas build $KASFILES
-    - ./ci/check-warnings $KAS_BUILD_DIR/warnings.log
-    - kas shell ci/base.yml:lockfile.yml --command "$CI_PROJECT_DIR/ci/junit.sh $KAS_WORK_DIR/build"
-
+    - |
+      KASFILES=$(./ci/jobs-to-kas "$CI_JOB_NAME" $EXTRA_KAS_FILES):lockfile.yml
+      echo KASFILES=$KASFILES
+      kas dump --update --force-checkout --resolve-refs --resolve-env $KASFILES
+      kas build $KASFILES
+      if [ $FATAL_WARNINGS -ne 0 ]; then
+        ./ci/check-warnings $KAS_BUILD_DIR/warnings.log
+      fi
+      kas shell ci/base.yml:lockfile.yml --command "$CI_PROJECT_DIR/ci/junit.sh $KAS_WORK_DIR/build"
   artifacts:
     name: "logs"
     when: on_failure
@@ -106,7 +110,7 @@ update-repos:
         echo Using existing lockfile.yml
       else
         # Be sure that this is the complete list of layers being fetched
-        kas dump --lock --update ci/qemuarm64.yml:ci/meta-openembedded.yml:ci/clang.yml:ci/meta-virtualization.yml | tee lockfile.yml
+        kas dump --lock --update ci/qemuarm64.yml:ci/meta-openembedded.yml:ci/clang.yml | tee lockfile.yml
       fi
       exit $exit_code
   artifacts:
@@ -127,7 +131,6 @@ update-repos:
 #  TS: [none, trusted-services]
 #  TESTING: testimage
 #  SECUREDEBUG: [none, secure-debug]
-#  VIRT: [none, xen]
 
 # Validate layers are Yocto Project Compatible
 check-layers:
@@ -156,6 +159,15 @@ corstone1000-mps3:
         TESTING: [none, tftf]
       - FIRMWARE: none
         SECUREDEBUG: [none, secure-debug]
+
+corstone1000-a320-fvp:
+  extends: .build
+  parallel:
+    matrix:
+      - FIRMWARE: corstone1000-firmware-only
+        TESTING: [none, tftf]
+      - FIRMWARE: none
+        TESTING: none
 
 documentation:
   extends: .setup
@@ -272,7 +284,6 @@ qemuarm64:
       - DISTRO: poky-tiny
         FIRMWARE: [u-boot, edk2]
         TESTING: testimage
-      - VIRT: xen
 
 qemuarm-secureboot:
   extends: .build
@@ -294,7 +305,6 @@ qemuarm:
         TESTING: testimage
       - DISTRO: poky-tiny
         TESTING: testimage
-      - VIRT: xen
 
 qemuarmv5:
   extends: .build
@@ -305,6 +315,18 @@ qemuarmv5:
         TESTING: testimage
       - DISTRO: poky-tiny
         TESTING: testimage
+
+rdn2:
+  extends: .build
+  parallel:
+    matrix:
+      - TESTING: testimage
+
+rdv2:
+  extends: .build
+  parallel:
+    matrix:
+      - TESTING: testimage
 
 sbsa-ref:
   extends: .build
@@ -322,15 +344,6 @@ selftest:
   script:
     - KASFILES=./ci/qemuarm64.yml:./ci/selftest.yml:lockfile.yml
     - kas shell --update --force-checkout $KASFILES -c 'oe-selftest --num-processes 2 --select-tag meta-arm --run-all-tests'
-
-sgi575:
-  extends: .build
-  parallel:
-    matrix:
-      - TESTING: testimage
-  # FVP binary is x86-only
-  tags:
-    - x86_64
 
 toolchains:
   extends: .build

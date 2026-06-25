@@ -454,10 +454,6 @@ def set_packagetriplet(d):
 python () {
     import string, re
 
-    # Handle backfilling
-    oe.utils.features_backfill("DISTRO_FEATURES", d)
-    oe.utils.features_backfill("MACHINE_FEATURES", d)
-
     # To add a recipe to the skip list , set:
     #   SKIP_RECIPE[pn] = "message"
     pn = d.getVar('PN')
@@ -661,9 +657,13 @@ python () {
         if path.endswith('.lz4'):
             d.appendVarFlag('do_unpack', 'depends', ' lz4-native:do_populate_sysroot')
 
+        # *.bz2 should DEPEND on bzip2-native for unpacking
+        elif path.endswith('.bz2'):
+            d.appendVarFlag('do_unpack', 'depends', ' bzip2-native:do_populate_sysroot')
+
         # *.zst should DEPEND on zstd-native for unpacking
         elif path.endswith('.zst'):
-            d.appendVarFlag('do_unpack', 'depends', ' zstd-native:do_populate_sysroot')
+            d.appendVarFlag('do_unpack', 'depends', ' zstd-decompress-native:do_populate_sysroot')
 
         # *.lz should DEPEND on lzip-native for unpacking
         elif path.endswith('.lz'):
@@ -671,7 +671,7 @@ python () {
 
         # *.xz should DEPEND on xz-native for unpacking
         elif path.endswith('.xz') or path.endswith('.txz'):
-            d.appendVarFlag('do_unpack', 'depends', ' xz-native:do_populate_sysroot')
+            d.appendVarFlag('do_unpack', 'depends', ' xz-decompress-native:do_populate_sysroot')
 
         # .zip should DEPEND on unzip-native for unpacking
         elif path.endswith('.zip') or path.endswith('.jar'):
@@ -679,11 +679,11 @@ python () {
 
         # Some rpm files may be compressed internally using xz (for example, rpms from Fedora)
         elif path.endswith('.rpm'):
-            d.appendVarFlag('do_unpack', 'depends', ' xz-native:do_populate_sysroot')
+            d.appendVarFlag('do_unpack', 'depends', ' xz-decompress-native:do_populate_sysroot')
 
         # *.deb should DEPEND on xz-native for unpacking
         elif path.endswith('.deb'):
-            d.appendVarFlag('do_unpack', 'depends', ' xz-native:do_populate_sysroot')
+            d.appendVarFlag('do_unpack', 'depends', ' xz-decompress-native:do_populate_sysroot')
 
         # *.7z should DEPEND on 7zip-native for unpacking
         elif path.endswith('.7z'):

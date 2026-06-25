@@ -30,6 +30,7 @@ PTESTS_FAST = "\
     json-glib \
     libarchive \
     libassuan \
+    libatomic-ops \
     libcheck \
     libconfig \
     libconvert-asn1-perl \
@@ -57,6 +58,7 @@ PTESTS_FAST = "\
     libxml-simple-perl \
     libxml2 \
     libxmlb \
+    libxslt \
     libyaml \
     logrotate \
     lua \
@@ -87,6 +89,7 @@ PTESTS_FAST = "\
     python3-pyyaml \
     python3-rpds-py \
     python3-trove-classifiers \
+    python3-vcs-versioning \
     python3-uritools \
     python3-wcwidth \
     python3-webcolors \
@@ -120,6 +123,7 @@ PTESTS_SLOW = "\
     gettext \
     glib-2.0 \
     gnutls \
+    go \
     gstreamer1.0 \
     less \
     libevent \
@@ -160,11 +164,11 @@ PTESTS_PROBLEMS:append:riscv64 = " tcl tcl8 python3-cffi strace lttng-tools pyth
 # These tests don't yet pass for musl qemuarm64
 PTESTS_SLOW:remove:libc-musl:qemuarm64 = "strace perl gnutls glib-2.0"
 PTESTS_FAST:remove:libc-musl:qemuarm64 = "libarchive"
-PTESTS_PROBLEMS:append:libc-musl:qemuarm64 = "strace perl gnutls glib-2.0 libarchive"
+PTESTS_PROBLEMS:append:libc-musl:qemuarm64 = " strace perl gnutls glib-2.0 libarchive"
 # These tests don't yet pass for musl qemux86-64
 PTESTS_SLOW:remove:libc-musl:qemux86-64 = "perl gnutls"
 PTESTS_FAST:remove:libc-musl:qemux86-64 = "libarchive"
-PTESTS_PROBLEMS:append:libc-musl:qemux86-64 = "perl gnutls libarchive"
+PTESTS_PROBLEMS:append:libc-musl:qemux86-64 = " perl gnutls libarchive"
 
 #    ruby \ # Timeout
 #    rt-tests \ # Needs to be checked whether it runs at all

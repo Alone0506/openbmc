@@ -39,7 +39,6 @@ def add_license_expression(
 ):
     simple_license_text = {}
     license_text_map = {}
-    license_ref_idx = 0
 
     def add_license_text(name):
         nonlocal objset
@@ -96,7 +95,6 @@ def add_license_expression(
 
     def convert(l):
         nonlocal license_text_map
-        nonlocal license_ref_idx
 
         if l == "(" or l == ")":
             return l
@@ -266,10 +264,9 @@ def get_package_sources_from_debug(
 
     pkg_data = oe.packagedata.read_subpkgdata_extended(package, d)
 
-    if pkg_data is None:
-        return
-
     dep_source_files = set()
+    if pkg_data is None:
+        return dep_source_files
 
     for file_path, file_data in pkg_data["files_info"].items():
         if not "debugsrc" in file_data:
@@ -385,7 +382,6 @@ def collect_dep_sources(dep_objsets, dest):
             index_sources_by_hash(e.to, dest)
 
 
-
 def _generate_git_purl(d, download_location, srcrev):
     """Generate a Package URL for a Git source from its download location.
 
@@ -395,27 +391,29 @@ def _generate_git_purl(d, download_location, srcrev):
 
     Returns the PURL string or None if no mapping matches.
     """
-    if not download_location or not download_location.startswith('git+'):
+    if not download_location or not download_location.startswith("git+"):
         return None
 
     git_url = download_location[4:]  # Remove 'git+' prefix
 
     # Default handler: github.com
     git_purl_handlers = {
-        'github.com': 'pkg:github',
+        "github.com": "pkg:github",
     }
 
     # Custom PURL mappings from SPDX_GIT_PURL_MAPPINGS
     # Format: "domain1:purl_type1 domain2:purl_type2"
-    custom_mappings = d.getVar('SPDX_GIT_PURL_MAPPINGS')
+    custom_mappings = d.getVar("SPDX_GIT_PURL_MAPPINGS")
     if custom_mappings:
         for mapping in custom_mappings.split():
-            parts = mapping.split(':', 1)
+            parts = mapping.split(":", 1)
             if len(parts) == 2:
                 git_purl_handlers[parts[0]] = parts[1]
                 bb.debug(2, f"Added custom Git PURL mapping: {parts[0]} -> {parts[1]}")
             else:
-                bb.warn(f"Invalid SPDX_GIT_PURL_MAPPINGS entry: {mapping} (expected format: domain:purl_type)")
+                bb.warn(
+                    f"Invalid SPDX_GIT_PURL_MAPPINGS entry: {mapping} (expected format: domain:purl_type)"
+                )
 
     try:
         parsed = urllib.parse.urlparse(git_url)
@@ -428,11 +426,11 @@ def _generate_git_purl(d, download_location, srcrev):
 
     for domain, purl_type in git_purl_handlers.items():
         if hostname == domain:
-            path = parsed.path.strip('/')
-            path_parts = path.split('/')
+            path = parsed.path.strip("/")
+            path_parts = path.split("/")
             if len(path_parts) >= 2:
                 owner = path_parts[0]
-                repo = path_parts[1].replace('.git', '')
+                repo = path_parts[1].replace(".git", "")
                 return f"{purl_type}/{owner}/{repo}@{srcrev}"
             break
 
@@ -451,12 +449,12 @@ def _enrich_source_package(d, dl, fd, file_name, primary_purpose):
 
     if fd.type == "git":
         # Use full SHA-1 from fd.revision
-        srcrev = getattr(fd, 'revision', None)
-        if srcrev and srcrev not in {'${AUTOREV}', 'AUTOINC', 'INVALID'}:
+        srcrev = getattr(fd, "revision", None)
+        if srcrev and srcrev not in {"${AUTOREV}", "AUTOINC", "INVALID"}:
             version = srcrev
 
         # Generate PURL for Git hosting services
-        download_location = getattr(dl, 'software_downloadLocation', None)
+        download_location = getattr(dl, "software_downloadLocation", None)
         if version and download_location:
             purl = _generate_git_purl(d, download_location, version)
 
@@ -467,12 +465,12 @@ def _enrich_source_package(d, dl, fd, file_name, primary_purpose):
         dl.software_packageUrl = purl
 
     # Add VCS external reference for Git repositories
-    download_location = getattr(dl, 'software_downloadLocation', None)
+    download_location = getattr(dl, "software_downloadLocation", None)
     if download_location and isinstance(download_location, str):
-        if download_location.startswith('git+'):
+        if download_location.startswith("git+"):
             git_url = download_location[4:]
-            if '@' in git_url:
-                git_url = git_url.split('@')[0]
+            if "@" in git_url:
+                git_url = git_url.split("@")[0]
 
             dl.externalRef = dl.externalRef or []
             dl.externalRef.append(
@@ -481,7 +479,6 @@ def _enrich_source_package(d, dl, fd, file_name, primary_purpose):
                     locator=[git_url],
                 )
             )
-
 
 
 def add_download_files(d, objset):
@@ -550,8 +547,10 @@ def add_download_files(d, objset):
             _enrich_source_package(d, dl, fd, file_name, primary_purpose)
 
             if fd.method.supports_checksum(fd):
-                # TODO Need something better than hard coding this
-                for checksum_id in ["sha256", "sha1"]:
+                for checksum_id in bb.fetch2.CHECKSUM_LIST:
+                    if checksum_id not in oe.spdx30.HashAlgorithm.NAMED_INDIVIDUALS:
+                        continue
+
                     expected_checksum = getattr(fd, "%s_expected" % checksum_id, None)
                     if expected_checksum is None:
                         continue
@@ -608,7 +607,6 @@ def get_is_native(d):
 
 def create_recipe_spdx(d):
     deploydir = Path(d.getVar("SPDXRECIPEDEPLOY"))
-    deploy_dir_spdx = Path(d.getVar("DEPLOY_DIR_SPDX"))
     pn = d.getVar("PN")
 
     license_data = oe.spdx_common.load_spdx_license_data(d)
@@ -728,7 +726,9 @@ def create_recipe_spdx(d):
 
             if status == "Patched":
                 spdx_vex = recipe_objset.new_vex_patched_relationship(
-                    [spdx_cve_id], [recipe]
+                    [spdx_cve_id],
+                    [recipe],
+                    notes=": ".join(v for v in (detail, description) if v),
                 )
                 patches = []
                 for idx, filepath in enumerate(resources):
@@ -753,12 +753,17 @@ def create_recipe_spdx(d):
                     )
 
             elif status == "Unpatched":
-                recipe_objset.new_vex_unpatched_relationship([spdx_cve_id], [recipe])
+                recipe_objset.new_vex_unpatched_relationship(
+                    [spdx_cve_id],
+                    [recipe],
+                    notes=": ".join(v for v in (detail, description) if v),
+                )
             elif status == "Ignored":
                 spdx_vex = recipe_objset.new_vex_ignored_relationship(
                     [spdx_cve_id],
                     [recipe],
                     impact_statement=description,
+                    notes=detail,
                 )
 
                 vex_just_type = d.getVarFlag("CVE_CHECK_VEX_JUSTIFICATION", detail)
@@ -819,10 +824,8 @@ def create_spdx(d):
 
     pn = d.getVar("PN")
     deploydir = Path(d.getVar("SPDXDEPLOY"))
-    deploy_dir_spdx = Path(d.getVar("DEPLOY_DIR_SPDX"))
     spdx_workdir = Path(d.getVar("SPDXWORK"))
     include_sources = d.getVar("SPDX_INCLUDE_SOURCES") == "1"
-    pkg_arch = d.getVar("SSTATE_PKGARCH")
     is_native = get_is_native(d)
 
     recipe, recipe_objset = load_recipe_spdx(d)
@@ -894,7 +897,7 @@ def create_spdx(d):
             sorted(oe.sbom30.get_element_link_id(b) for b in dep_builds),
         )
 
-    debug_source_ids = set()
+    debug_sources = set()
     source_hash_cache = {}
 
     # Write out the package SPDX data now. It is not complete as we cannot
@@ -1058,12 +1061,13 @@ def create_spdx(d):
                 )
 
             if include_sources:
-                debug_sources = get_package_sources_from_debug(
-                    d, package, package_files, dep_sources, source_hash_cache,
+                debug_sources |= get_package_sources_from_debug(
+                    d,
+                    package,
+                    package_files,
+                    dep_sources,
+                    source_hash_cache,
                     excluded_files=excluded_files,
-                )
-                debug_source_ids |= set(
-                    oe.sbom30.get_element_link_id(d) for d in debug_sources
                 )
 
             oe.sbom30.write_recipe_jsonld_doc(
@@ -1090,12 +1094,17 @@ def create_spdx(d):
                 sorted(list(sysroot_files)),
             )
 
-    if build_inputs or debug_source_ids:
+    if build_inputs or debug_sources:
+        debug_source_ids = sorted(
+            oe.sbom30.get_element_link_id(d)
+            for d in debug_sources.difference(build_inputs)
+        )
+
         build_objset.new_scoped_relationship(
             [build],
             oe.spdx30.RelationshipType.hasInput,
             oe.spdx30.LifecycleScopeType.build,
-            sorted(list(build_inputs)) + sorted(list(debug_source_ids)),
+            sorted(build_inputs) + debug_source_ids,
         )
 
     if d.getVar("SPDX_INCLUDE_PACKAGECONFIG", True) != "0":
@@ -1125,7 +1134,6 @@ def create_spdx(d):
 
 
 def create_package_spdx(d):
-    deploy_dir_spdx = Path(d.getVar("DEPLOY_DIR_SPDX"))
     deploydir = Path(d.getVar("SPDXRUNTIMEDEPLOY"))
 
     direct_deps = oe.spdx_common.collect_direct_deps(d, "do_create_spdx")
@@ -1146,7 +1154,6 @@ def create_package_spdx(d):
         d, "%s-package-common" % d.getVar("PN")
     )
 
-    pkgdest = Path(d.getVar("PKGDEST"))
     for package in d.getVar("PACKAGES").split():
         localdata = bb.data.createCopy(d)
         pkg_name = d.getVar("PKG:%s" % package) or package
@@ -1184,7 +1191,7 @@ def create_package_spdx(d):
             if dep not in providers:
                 continue
 
-            (dep, _) = providers[dep]
+            dep, _ = providers[dep]
 
             if not oe.packagedata.packaged(dep, localdata):
                 continue
@@ -1344,7 +1351,6 @@ def collect_build_package_inputs(d, objset, build, packages, files_by_hash=None)
 
 
 def create_rootfs_spdx(d):
-    deploy_dir_spdx = Path(d.getVar("DEPLOY_DIR_SPDX"))
     deploydir = Path(d.getVar("SPDXROOTFSDEPLOY"))
     root_packages_file = Path(d.getVar("SPDX_ROOTFS_PACKAGES"))
     image_basename = d.getVar("IMAGE_BASENAME")
@@ -1455,17 +1461,17 @@ def create_image_spdx(d):
             image_path = image_deploy_dir / image_filename
             if os.path.isdir(image_path):
                 a, _ = add_package_files(
-                        d,
-                        objset,
-                        image_path,
-                        lambda file_counter: objset.new_spdxid(
-                            "imagefile", str(file_counter)
-                        ),
-                        lambda filepath: [],
-                        license_data=None,
-                        ignore_dirs=[],
-                        ignore_top_level_dirs=[],
-                        archive=None,
+                    d,
+                    objset,
+                    image_path,
+                    lambda file_counter: objset.new_spdxid(
+                        "imagefile", str(file_counter)
+                    ),
+                    lambda filepath: [],
+                    license_data=None,
+                    ignore_dirs=[],
+                    ignore_top_level_dirs=[],
+                    archive=None,
                 )
                 artifacts.extend(a)
             else:
@@ -1478,7 +1484,11 @@ def create_image_spdx(d):
                             oe.spdx30.Hash(
                                 algorithm=oe.spdx30.HashAlgorithm.sha256,
                                 hashValue=bb.utils.sha256_file(image_path),
-                            )
+                            ),
+                            oe.spdx30.Hash(
+                                algorithm=oe.spdx30.HashAlgorithm.sha512,
+                                hashValue=bb.utils.sha512_file(image_path),
+                            ),
                         ],
                     )
                 )

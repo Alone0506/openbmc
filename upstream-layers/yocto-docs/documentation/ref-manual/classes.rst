@@ -476,6 +476,10 @@ build configuration system. "cml" stands for "Configuration Menu Language", whic
 originates from the Linux kernel but is also used in other projects such as U-Boot
 and BusyBox. It could have been called "kconfig" too.
 
+The CML configuration file location (``.config``) is by default expected to be
+in the build directory (:term:`B`). This can be overridden with the
+:term:`KCONFIG_CONFIG_ROOTDIR` variable.
+
 .. _ref-classes-compress_doc:
 
 ``compress_doc``
@@ -555,8 +559,8 @@ The toplevel :term:`SPDX` output file is generated in JSON format as a
 as well as in ``tmp/deploy/spdx``.
 
 The exact behaviour of this class, and the amount of output can be controlled
-by the :term:`SPDX_PRETTY`, :term:`SPDX_ARCHIVE_PACKAGED`,
-:term:`SPDX_ARCHIVE_SOURCES` and :term:`SPDX_INCLUDE_SOURCES` variables.
+by the :term:`SPDX_PRETTY`, :term:`SPDX_INCLUDE_SOURCES` and other variables
+starting with with ``SPDX_``.
 
 See the description of these variables and the
 ":ref:`dev-manual/sbom:creating a software bill of materials`"
@@ -591,78 +595,6 @@ cross-compilation tools used for building SDKs. See the
 ":ref:`overview-manual/concepts:cross-development toolchain generation`"
 section in the Yocto Project Overview and Concepts Manual for more
 discussion on these cross-compilation tools.
-
-.. _ref-classes-cve-check:
-
-``cve-check``
-=============
-
-The :ref:`ref-classes-cve-check` class looks for known CVEs (Common Vulnerabilities
-and Exposures) while building with BitBake. This class is meant to be
-inherited globally from a configuration file::
-
-   INHERIT += "cve-check"
-
-To filter out obsolete CVE database entries which are known not to impact
-software from :term:`OpenEmbedded-Core (OE-Core)`, add the following line to the
-build configuration file::
-
-   include cve-extra-exclusions.inc
-
-You can also look for vulnerabilities in specific packages by passing
-``-c cve_check`` to BitBake.
-
-After building the software with Bitbake, CVE check output reports are available in ``tmp/deploy/cve``
-and image specific summaries in ``tmp/deploy/images/*.json`` files.
-
-When building, the CVE checker will emit build time warnings for any detected
-issues which are in the state ``Unpatched``, meaning that CVE issue seems to affect the software component
-and version being compiled and no patches to address the issue are applied. Other states
-for detected CVE issues are: ``Patched`` meaning that a patch to address the issue is already
-applied, and ``Ignored`` meaning that the issue can be ignored.
-
-The ``Patched`` state of a CVE issue is detected from patch files with the format
-``CVE-ID.patch``, e.g. ``CVE-2019-20633.patch``, in the :term:`SRC_URI` and using
-CVE metadata of format ``CVE: CVE-ID`` in the commit message of the patch file.
-
-.. note::
-
-   Commit message metadata (``CVE: CVE-ID`` in a patch header) will not be scanned
-   in any patches that are remote, i.e. that are anything other than local files
-   referenced via ``file://`` in SRC_URI. However, a ``CVE-ID`` in a remote patch
-   file name itself will be registered.
-
-If the recipe adds ``CVE-ID`` as flag of the :term:`CVE_STATUS` variable with status
-mapped to ``Ignored``, then the CVE state is reported as ``Ignored``::
-
-   CVE_STATUS[CVE-2020-15523] = "not-applicable-platform: Issue only applies on Windows"
-
-If CVE check reports that a recipe contains false positives or false negatives, these may be
-fixed in recipes by adjusting the CVE product name using :term:`CVE_PRODUCT` and :term:`CVE_VERSION` variables.
-:term:`CVE_PRODUCT` defaults to the plain recipe name :term:`BPN` which can be adjusted to one or more CVE
-database vendor and product pairs using the syntax::
-
-   CVE_PRODUCT = "flex_project:flex"
-
-where ``flex_project`` is the CVE database vendor name and ``flex`` is the product name. Similarly
-if the default recipe version :term:`PV` does not match the version numbers of the software component
-in upstream releases or the CVE database, then the :term:`CVE_VERSION` variable can be used to set the
-CVE database compatible version number, for example::
-
-   CVE_VERSION = "2.39"
-
-Any bugs or missing or incomplete information in the CVE database entries should be fixed in the CVE database
-via the `NVD feedback form <https://nvd.nist.gov/info/contact-form>`__.
-
-Users should note that security is a process, not a product, and thus also CVE checking, analyzing results,
-patching and updating the software should be done as a regular process. The data and assumptions
-required for CVE checker to reliably detect issues are frequently broken in various ways.
-These can only be detected by reviewing the details of the issues and iterating over the generated reports,
-and following what happens in other Linux distributions and in the greater open source community.
-
-You will find some more details in the
-":ref:`security-manual/vulnerabilities:checking for vulnerabilities`"
-section in the Development Tasks Manual.
 
 .. _ref-classes-cython:
 
@@ -1067,10 +999,10 @@ introspection. This functionality is only enabled if the
 
 .. note::
 
-   This functionality is :ref:`backfilled <ref-features-backfill>` by default
-   and, if not applicable, should be disabled through
-   :term:`DISTRO_FEATURES_BACKFILL_CONSIDERED` or
-   :term:`MACHINE_FEATURES_BACKFILL_CONSIDERED`, respectively.
+   This functionality is :ref:`enabled <ref-manual/features:Default Features>`
+   by default and, if not applicable, should be disabled through
+   :term:`DISTRO_FEATURES_OPTED_OUT` or
+   :term:`MACHINE_FEATURES_OPTED_OUT`, respectively.
 
 .. _ref-classes-grub-efi:
 
@@ -1420,12 +1352,13 @@ Its behavior is mainly controlled by the following variables:
 ====================
 
 The :ref:`ref-classes-kernel-fit-image` class provides support to pack a kernel image,
-device trees, a U-boot script, and an :term:`Initramfs` into a single FIT image.
+device trees, a U-boot script, an :term:`Initramfs` and additional loadables into a
+single FIT image.
 In theory, a FIT image can support any number of kernels, U-boot scripts,
 :term:`Initramfs`, and device trees.
 However, :ref:`ref-classes-kernel-fit-image` currently only supports
 limited usecases: just one kernel image, an optional U-boot script,
-an optional :term:`Initramfs`, and any number of device trees.
+an optional :term:`Initramfs`, and any number of device trees and loadables.
 
 The FIT image is created by a recipe which inherits the
 :ref:`ref-classes-kernel-fit-image` class.
@@ -1535,6 +1468,17 @@ allow configuration:
    At run-time, U-boot's boot command can be configured to load the boot script
    from the FIT image and source it.
 
+-  Multiple additional loadables (e.g.: firmwares for auxiliary processors) can
+   be added to the FIT image created by :ref:`ref-classes-kernel-fit-image`.
+   The addition of loadables is optional. The loadables are specified using the
+   :term:`FIT_LOADABLES` variable; each of them can then be configured through
+   flags on the following variables: :term:`FIT_LOADABLE_ARCH`,
+   :term:`FIT_LOADABLE_COMPRESSION`, :term:`FIT_LOADABLE_DESCRIPTION`,
+   :term:`FIT_LOADABLE_ENTRYPOINT`, :term:`FIT_LOADABLE_FILENAME`,
+   :term:`FIT_LOADABLE_LOADADDRESS`, :term:`FIT_LOADABLE_OS` and
+   :term:`FIT_LOADABLE_TYPE`. All loadables specified in this way will be added
+   to all configurations present in the FIT image.
+
 -  The FIT image generated by the :ref:`ref-classes-kernel-fit-image` class is signed when the
    variables :term:`UBOOT_SIGN_ENABLE`, :term:`UBOOT_MKIMAGE_DTCOPTS`,
    :term:`UBOOT_SIGN_KEYDIR` and :term:`UBOOT_SIGN_KEYNAME` are set
@@ -1606,6 +1550,15 @@ The :ref:`ref-classes-kernel-uimage` class provides support to pack uImage.
 
 The :ref:`ref-classes-kernel-yocto` class provides common functionality for building
 from linux-yocto style kernel source repositories.
+
+.. _ref-classes-kernel-yocto-rust:
+
+``kernel-yocto-rust``
+=====================
+
+The :ref:`ref-classes-kernel-yocto-rust` class creates the necessary Rust
+Linux kernel dependencies and ensures that they are available by running ``make
+rustavailable`` from the Linux kernel source tree.
 
 .. _ref-classes-kernelsrc:
 
@@ -1772,6 +1725,19 @@ includes one or more kernel modules and has its own means of building the module
 inherits this class as opposed to inheriting the :ref:`ref-classes-module`
 class.
 
+.. _ref-classes-module-rust:
+
+``module-rust``
+===============
+
+The :ref:`ref-classes-module-rust` class provides support for building
+out-of-tree Linux kernel modules written in the Rust programming language. The
+class inherits the :ref:`ref-classes-module` class.
+
+For general information on out-of-tree Linux kernel modules, see the
+":ref:`kernel-dev/common:incorporating out-of-tree modules`"
+section in the Yocto Project Linux Kernel Development Manual.
+
 .. _ref-classes-multilib*:
 
 ``multilib*``
@@ -1890,6 +1856,11 @@ generation provided by :ref:`ref-classes-create-spdx`.
 
 ``npm``
 =======
+
+.. warning::
+
+   The NPM fetcher is currently disabled due to security concerns. See
+   :bitbake_rev:`355cd226e0720a9ed7683bb01c8c0a58eee03664` for more information.
 
 Provides support for building Node.js software fetched using the
 :wikipedia:`node package manager (NPM) <Npm_(software)>`.
@@ -2717,6 +2688,61 @@ configuration checks from the ``local.conf`` configuration file to
 prevent common mistakes that cause build failures. Distribution policy
 usually determines whether to include this class.
 
+.. _ref-classes-sbom-cve-check:
+
+``sbom-cve-check``
+==================
+
+The :ref:`ref-classes-sbom-cve-check` class uses the `sbom-cve-check
+<https://github.com/bootlin/sbom-cve-check>`__ command-line tool for post-build CVE
+analysis. It relies on the :ref:`ref-classes-create-spdx` class as SPDX files
+are the input of this tool.
+
+This class should be enabled through the :ref:`ref-fragments-core-yocto-sbom-cve-check`
+fragment:
+
+.. code-block:: console
+
+   $ bitbake-config-build enable-fragment core/yocto/sbom-cve-check
+
+After building an image, ``sbom-cve-check`` will generate one or more reports in
+the :term:`DEPLOY_DIR_IMAGE` directory depending on the current value of
+:term:`SBOM_CVE_CHECK_EXPORT_VARS`.
+
+See the variables starting with ``SBOM_CVE_CHECK_`` in the :doc:`Yocto Project
+Reference Manual glossary </ref-manual/variables>` to learn more on how to
+configure the behavior of this class.
+
+.. _ref-classes-sbom-cve-check-recipe:
+
+``sbom-cve-check-recipe``
+=========================
+
+The :ref:`ref-classes-sbom-cve-check-recipe` class uses the `sbom-cve-check
+<https://github.com/bootlin/sbom-cve-check>`__ command-line tool for post-build CVE
+analysis of a recipe. It relies on the :ref:`ref-classes-create-spdx` class as
+SPDX files are the input of this tool.
+
+This class can be inherited in any recipe. Compared to the
+:class:`ref-classes-sbom-cve-check` class, this class only uses the SBOM of the
+recipe (after the ``create_recipe_sbom`` task is run) to determine which is the
+underlying software and do the analysis, meaning that building the recipe itself
+isn't necessary.
+
+To use this class, inherit it in the recipe and run:
+
+.. code-block:: console
+
+   $ bitbake <recipe> -c sbom_cve_check_recipe
+
+After running the command, ``sbom-cve-check`` will generate one or more reports
+in the :term:`DEPLOY_DIR_IMAGE` directory depending on the current value of
+:term:`SBOM_CVE_CHECK_EXPORT_VARS`.
+
+See the variables starting with ``SBOM_CVE_CHECK_`` in the :doc:`Yocto Project
+Reference Manual glossary </ref-manual/variables>` to learn more on how to
+configure the behavior of this class.
+
 .. _ref-classes-scons:
 
 ``scons``
@@ -3516,6 +3542,7 @@ The variables used by this class are:
 -  :term:`UKI_SB_CERT`: optional UEFI secureboot certificate matching the
    private key
 -  :term:`UKI_SB_KEY`: optional UEFI secureboot private key to sign UKI with
+-  :term:`UKI_DEVICETREE`: list of device tree blobs to include in the UKI
 
 For examples on how to use this class see oeqa selftest
 :oe_git:`meta/lib/oeqa/selftest/cases/uki.py
@@ -3719,8 +3746,7 @@ using the Vala programming language.
 ========
 
 The :ref:`ref-classes-vex` class is used to generate metadata needed by external
-tools to check for vulnerabilities, for example CVEs. It can be used as a
-replacement for :ref:`ref-classes-cve-check`.
+tools to check for vulnerabilities, for example CVEs.
 
 In order to use this class, inherit the class in the ``local.conf`` file and it
 will add the ``generate_vex`` task for every recipe::
@@ -3730,9 +3756,6 @@ will add the ``generate_vex`` task for every recipe::
 If an image is built it will generate a report in :term:`DEPLOY_DIR_IMAGE` for
 all the packages used, it will also generate a file for all recipes used in the
 build.
-
-Variables use the ``CVE_CHECK`` prefix to keep compatibility with the
-:ref:`ref-classes-cve-check` class.
 
 Example usage::
 

@@ -3,7 +3,7 @@ inherit_defer native
 
 SUMMARY += " (tools only)"
 
-PACKAGECONFIG = "tools asahi panfrost"
+PACKAGECONFIG = "tools asahi imagination panfrost"
 # llvm required for libclc
 PACKAGECONFIG += "gallium-llvm"
 # Doesn't compile without wayland-scanner if PLATFORMS has wayland in, and,
@@ -17,3 +17,4 @@ EXTRA_OEMESON += " \
     -Dmesa-clc=enabled -Dinstall-mesa-clc=true -Dmesa-clc-bundle-headers=enabled \
     -Dprecomp-compiler=enabled -Dinstall-precomp-compiler=true \
 "
+

@@ -23,9 +23,12 @@ PTESTS_FAST_META_OE = "\
     function2 \
     fwupd \
     gcab \
+    googletest \
+    hunspell \
     imagemagick \
     jemalloc \
     jq \
+    lcms \
     leveldb \
     libcereal \
     libdbi-perl \
@@ -50,6 +53,7 @@ PTESTS_FAST_META_OE = "\
     nlohmann-json \
     nodejs \
     onig \
+    openjpeg \
     oprofile \
     pegtl \
     pv \
@@ -58,7 +62,8 @@ PTESTS_FAST_META_OE = "\
     uriparser \
     utf8proc \
     uthash \
-    ${@bb.utils.contains('DISTRO_FEATURES', 'pam', 'xrdp', '', d)} \
+    xdg-dbus-proxy \
+    ${@bb.utils.contains('DISTRO_FEATURES', 'pam x11', 'xrdp', '', d)} \
     zeromq \
 "
 PTESTS_FAST_META_OE:append:x86 = " mcelog"
@@ -73,11 +78,13 @@ PTESTS_SLOW_META_OE = "\
     c-ares \
     ${@bb.utils.contains('DISTRO_FEATURES', 'x11', 'freerdp', '', d)} \
     fftw \
+    jsoncpp \
     libusb-compat \
     mariadb \
     postgresql \
     re2 \
     rocksdb \
+    tbb \
 "
 PTESTS_SLOW_META_OE:append:x86 = " kernel-selftest"
 PTESTS_SLOW_META_OE:append:x86-64 = " kernel-selftest"

@@ -13,6 +13,7 @@
 # SPDX-License-Identifier: MIT
 #
 
+import argparse
 import itertools
 import json
 import os
@@ -65,14 +66,25 @@ if RELEASES_FROM_JSON:
         bb_ver = release["bitbake_version"]
         if release["status"] == "Active Development":
             DEVBRANCH = bb_ver
-        if release["series"] == "current":
-            ACTIVERELEASES.append(bb_ver)
         if "LTS until" in release["status"]:
             LTSSERIES.append(bb_ver)
         if release["bitbake_version"]:
             YOCTO_MAPPING[bb_ver] = release["release_codename"]
 
-    ACTIVERELEASES.remove(DEVBRANCH)
+    # Find the first non-dev release, which should be displayed as the default
+    # page on the docs website.
+    current_branch = ""
+    for release in RELEASES_FROM_JSON:
+        if release["status"] != "Active Development":
+            current_branch = release["bitbake_version"]
+            break
+
+    if not current_branch:
+        sys.exit("Unable to find a current release! Exiting...")
+
+    # make the list of releases unique, there can be duplication when the
+    # current releases is also an LTS
+    ACTIVERELEASES = list(dict.fromkeys([current_branch] + LTSSERIES))
 
 print(f"ACTIVERELEASES calculated to be {ACTIVERELEASES}", file=sys.stderr)
 print(f"DEVBRANCH calculated to be {DEVBRANCH}", file=sys.stderr)
@@ -80,10 +92,24 @@ print(f"LTSSERIES calculated to be {LTSSERIES}", file=sys.stderr)
 
 BB_RELEASE_TAG_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 
+def main():
+    parser = argparse.ArgumentParser(
+        description="Parse https://dashboard.yoctoproject.org/releases.json to get current releases information"
+    )
+    parser.add_argument("--get-latest-branch",
+                        help="Print current latest branch and exit",
+                        action="store_true",
+                        default=False)
+    args = parser.parse_args()
+
+    if args.get_latest_branch:
+        print(ACTIVERELEASES[0])
+        sys.exit(0)
+
 def get_current_version():
     # Test tags exist and inform the user to fetch if not
     try:
-        subprocess.run(["git", "show", f"{LTSSERIES[0]}.0"],
+        subprocess.run(["git", "show", f"{LTSSERIES[-1]}.0"],
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
     except subprocess.CalledProcessError:
         sys.exit("Please run 'git fetch --tags' before building the documentation")
@@ -343,3 +369,6 @@ def write_releases_rst(releases_rst_out: str):
             - :yocto_docs:`1.6.2 BitBake User Manual </1.6.2/bitbake-user-manual/bitbake-user-manual.html>`
             - :yocto_docs:`1.6.3 BitBake User Manual </1.6.3/bitbake-user-manual/bitbake-user-manual.html>`
             """))
+
+if __name__ == "__main__":
+    main()

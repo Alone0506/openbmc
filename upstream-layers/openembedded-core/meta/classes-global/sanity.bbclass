@@ -551,6 +551,21 @@ def check_tar_version(sanity_data):
     except subprocess.CalledProcessError as e:
         return "Unable to execute tar --help, exit code %d\n%s\n" % (e.returncode, e.output)
 
+    try:
+        distro = oe.lsb.distro_identifier()
+    except Exception:
+        distro = None
+
+    if distro:
+        rhel9_alike_prefixes = ("rhel-9", "centos-9", "rocky-9", "almalinux-9")
+        rhel9_tar_minimum_version = "1.35"
+        for prefix in rhel9_alike_prefixes:
+            if distro.startswith(prefix) and bb.utils.vercmp_string_op(version, rhel9_tar_minimum_version, "<"):
+                return ("Your version of tar is older than %s and crashes when extracting read-only files with xattrs. "
+                        "Your distro is %s which triggers this bug due to the presence of selinux attributes. "
+                        "Please install a newer version of tar (you could use the project's buildtools-tarball from "
+                        "our last release or use scripts/install-buildtools).\n" % (rhel9_tar_minimum_version, distro))
+
     return None
 
 # We use git parameters and functionality only found in 1.7.8 or later
@@ -824,6 +839,13 @@ def check_sanity_version_change(status, d):
         "An error occurred during checking the C++ toolchain for '--std=gnu++20' support. "
         "Please use a g++ compiler that supports C++20 (e.g. g++ version 10 onwards)."))
 
+    # Check there aren't obsolete wic/wks directories
+    for component in d.getVar("BBPATH").split(":") + d.getVar("BBLAYERS").split():
+        for subcomponent in ['wic', 'scripts/lib/wic/canned-wks']:
+            testpath = os.path.join(component, subcomponent)
+            if os.path.exists(testpath):
+                status.addresult("wic/wks files at %s need to be moved to files/wic within the layer to be found/used\n" % testpath)
+
 def sanity_check_locale(d):
     """
     Currently bitbake switches locale to en_US.UTF-8 so check that this locale actually exists.
@@ -961,6 +983,10 @@ def check_sanity_everybuild(status, d):
         status.addresult("Error, TMPDIR (%s) contains redundant slashes. "
             "Please set TMPDIR to a clean path with no trailing slash or "
             "consecutive slashes (e.g. %s).\n" % (tmpdir, os.path.normpath(tmpdir)))
+
+    # Check whether the SOURCE_MIRROR_URL variable, belonging to the 'own-mirrors' class, is defined
+    if oe.utils.inherits(d, 'own-mirrors') and not d.getVar('SOURCE_MIRROR_URL'):
+        status.addresult("own-mirrors is enabled, but SOURCE_MIRROR_URL is not defined")
 
     # Check the format of MIRRORS, PREMIRRORS and SSTATE_MIRRORS
     import re

@@ -11,7 +11,8 @@ DEPENDS = "virtual/libx11 libxt libxft gdk-pixbuf libxmu libptytty ncurses-nativ
 SRC_URI = "http://dist.schmorp.de/rxvt-unicode/Attic/rxvt-unicode-${PV}.tar.bz2 \
 	   file://xwc.patch \
 	   file://rxvt.desktop \
-	   file://rxvt.png"
+	   file://rxvt.png \
+           file://0001-rxvt-unicode-fix-gcc16-c-20.patch"
 
 inherit autotools features_check pkgconfig update-alternatives
 
@@ -35,9 +36,6 @@ EXTRA_OECONF = "--enable-xim \
 
 PACKAGECONFIG ??= ""
 PACKAGECONFIG[startup] = "--enable-startup-notification,--disable-startup-notification,startup-notification,"
-
-# Ensure we don't delete the shipped aclocal.m4
-EXTRA_AUTORECONF += "--exclude=aclocal"
 
 do_compile:prepend () {
 	echo '#define UTMP_FILE "${localstatedir}/run/utmp"' >> config.h
