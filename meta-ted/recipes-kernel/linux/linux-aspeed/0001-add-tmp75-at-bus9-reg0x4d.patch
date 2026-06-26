@@ -3,6 +3,8 @@ From: ted <wii03903975@gmail.com>
 Date: Fri, 26 Jun 2026 18:08:29 +0800
 Subject: [PATCH] add tmp75 at bus9, reg0x4d
 
+Upstream-Status: Inappropriate [local OpenBMC test configuration]
+
 ---
  arch/arm/boot/dts/aspeed/aspeed-ast2600-evb.dts | 5 +++++
  1 file changed, 5 insertions(+)
