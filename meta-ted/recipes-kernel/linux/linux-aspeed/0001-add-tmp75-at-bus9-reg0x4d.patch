@@ -1,0 +1,25 @@
+From b1502fd73a7416c821553feb3d155e79a8eb1383 Mon Sep 17 00:00:00 2001
+From: ted <wii03903975@gmail.com>
+Date: Fri, 26 Jun 2026 18:08:29 +0800
+Subject: [PATCH] add tmp75 at bus9, reg0x4d
+
+---
+ arch/arm/boot/dts/aspeed/aspeed-ast2600-evb.dts | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/arch/arm/boot/dts/aspeed/aspeed-ast2600-evb.dts b/arch/arm/boot/dts/aspeed/aspeed-ast2600-evb.dts
+index 3f2ca9da0be2..100b04a16992 100644
+--- a/arch/arm/boot/dts/aspeed/aspeed-ast2600-evb.dts
++++ b/arch/arm/boot/dts/aspeed/aspeed-ast2600-evb.dts
+@@ -262,6 +262,11 @@ lm75@4d {
+ 
+ &i2c9 {
+ 	status = "okay";
++
++	tmp75@4d {
++		compatible = "ti,tmp75";
++		reg = <0x4d>;
++	};
+ };
+ 
+ &i2c12 {

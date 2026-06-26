@@ -1,5 +1,3 @@
-# romulus dts: linux-aspeed/arch/arm/boot/dts/aspeed/aspeed-bmc-opp-romulus.dts
+FILESEXTRAPATHS:prepend := "${THISDIR}/${PN}:"
 
-# := Immediate Expansion
-# =  Lazy Expansion
-# KSRC := "git://${THISDIR}/linux-aspeed;protocol=file;branch=${KBRANCH}"
+SRC_URI += "file://0001-add-tmp75-at-bus9-reg0x4d.patch"
