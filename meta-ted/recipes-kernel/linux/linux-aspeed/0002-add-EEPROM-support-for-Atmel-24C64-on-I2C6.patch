@@ -1,0 +1,28 @@
+From 6229607cc061a30a73eb3b742654ec7c0e6aa337 Mon Sep 17 00:00:00 2001
+From: ted <wii03903975@gmail.com>
+Date: Sat, 27 Jun 2026 17:09:42 +0800
+Subject: [PATCH] add EEPROM support for Atmel 24C64 on I2C6
+
+Upstream-Status: Inappropriate [local OpenBMC test configuration]
+
+---
+ arch/arm/boot/dts/aspeed/aspeed-ast2600-evb.dts | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/arch/arm/boot/dts/aspeed/aspeed-ast2600-evb.dts b/arch/arm/boot/dts/aspeed/aspeed-ast2600-evb.dts
+index 100b04a16992..17b732880656 100644
+--- a/arch/arm/boot/dts/aspeed/aspeed-ast2600-evb.dts
++++ b/arch/arm/boot/dts/aspeed/aspeed-ast2600-evb.dts
+@@ -234,6 +234,12 @@ &i2c5 {
+ 
+ &i2c6 {
+ 	status = "okay";
++
++    eeprom@54 {
++        compatible = "atmel,24c64";
++        reg = <0x54>;
++        pagesize = <32>;
++    };
+ };
+ 
+ &i2c7 {

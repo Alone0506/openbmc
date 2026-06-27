@@ -1,0 +1,60 @@
+From 1f3a0ea24f1dbcdf5c8e43f9de6f310f6eabd602 Mon Sep 17 00:00:00 2001
+From: ted <wii03903975@gmail.com>
+Date: Sat, 27 Jun 2026 17:13:58 +0800
+Subject: [PATCH] add EEPROM support for smbus and at24c on bus 6
+
+Upstream-Status: Inappropriate [local OpenBMC test configuration]
+
+---
+ hw/arm/aspeed_ast2600_evb.c | 27 ++++++++++++++++++++++++---
+ 1 file changed, 24 insertions(+), 3 deletions(-)
+
+diff --git a/hw/arm/aspeed_ast2600_evb.c b/hw/arm/aspeed_ast2600_evb.c
+index 437b64b79..e1463e3ef 100644
+--- a/hw/arm/aspeed_ast2600_evb.c
++++ b/hw/arm/aspeed_ast2600_evb.c
+@@ -13,20 +13,41 @@
+ #include "hw/arm/aspeed_soc.h"
+ #include "hw/i2c/smbus_eeprom.h"
+ #include "hw/sensor/tmp105.h"
++#include "hw/nvram/eeprom_at24c.h"
+ 
+ /* AST2600 evb hardware value */
+ #define AST2600_EVB_HW_STRAP1 0x000000C0
+ #define AST2600_EVB_HW_STRAP2 0x00000003
+ 
++/* Ted BMC FRU */
++static const uint8_t ted_bmc_fruid[] = {
++    0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0xFE,
++    0x01, 0x05, 0x00,  // length = 5(40 bytes), lang = 0(English)
++    0xC3, 0x54, 0x65, 0x64,  // Manufacturer Name (Ted)
++    0xCB, 0x4D, 0x79, 0x20, 0x50, 0x72, 0x65, 0x63, 0x69, 0x6F, 0x75, 0x73,  // Product Name (My Precious)
++    0xC0,  // Product Part/Model Number
++    0xC3, 0x31, 0x2E, 0x30,  // Product Version (1.0)
++    0xC4, 0x54, 0x41, 0x53, 0x4B,  // Product Serial Number (TASK)
++    0xC0,  // Asset Tag
++    0xC0,  // FRU File ID
++    0xC1,
++    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  // Padding
++    0x00  // Product Info Area Checksum (zero checksum)
++};
++static const size_t ted_bmc_fruid_len = sizeof(ted_bmc_fruid);
++
+ static void ast2600_evb_i2c_init(AspeedMachineState *bmc)
+ {
+     AspeedSoCState *soc = bmc->soc;
+-    DeviceState *dev;
+-    uint8_t *eeprom_buf = g_malloc0(8 * 1024);
+ 
+-    smbus_eeprom_init_one(aspeed_i2c_get_bus(&soc->i2c, 7), 0x50,
++    uint8_t *eeprom_buf = g_malloc0(256);
++    memcpy(eeprom_buf, ted_bmc_fruid, ted_bmc_fruid_len);
++    smbus_eeprom_init_one(aspeed_i2c_get_bus(&soc->i2c, 6), 0x50,
+                           eeprom_buf);
++    at24c_eeprom_init_rom(aspeed_i2c_get_bus(&soc->i2c, 6), 0x54, 8 * KiB,
++                          ted_bmc_fruid, ted_bmc_fruid_len);
+ 
++    DeviceState *dev;
+     /* LM75 is compatible with TMP105 driver */
+     dev = DEVICE(i2c_slave_create_simple(aspeed_i2c_get_bus(&soc->i2c, 8),
+                                          TYPE_TMP105, 0x4d));
