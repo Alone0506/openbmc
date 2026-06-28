@@ -1,29 +1,7 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/bash
 
-QEMU="${QEMU:-build/tmp/sysroots-components/x86_64/qemu-system-native/usr/bin/qemu-system-arm}"
-IMAGE="${IMAGE:-build/tmp/deploy/images/evb-ast2600/obmc-phosphor-image-evb-ast2600.static.mtd}"
-LIBSLIRP_DIR="${LIBSLIRP_DIR:-build/tmp/sysroots-components/x86_64/libslirp-native/usr/lib}"
-
-if [[ ! -x "$QEMU" ]]; then
-    QEMU="$(find build/tmp/work/x86_64-linux/qemu-system-native -type f -executable -name qemu-system-arm 2>/dev/null | head -n 1 || true)"
-fi
-echo "$QEMU"
-
-if [[ -z "$QEMU" || ! -x "$QEMU" ]]; then
-    echo "qemu-system-arm was not found. Build it with: bitbake qemu-system-native" >&2
-    exit 1
-fi
-
-if [[ ! -e "$IMAGE" ]]; then
-    echo "BMC image was not found: $IMAGE" >&2
-    echo "Build it with your OpenBMC image target, for example: bitbake obmc-phosphor-image" >&2
-    exit 1
-fi
-
-if [[ -d "$LIBSLIRP_DIR" ]]; then
-    export LD_LIBRARY_PATH="$LIBSLIRP_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-fi
+QEMU="build/tmp/work/x86_64-linux/qemu-helper-native/1.0/recipe-sysroot-native/usr/bin/qemu-system-arm"
+IMAGE="build/tmp/deploy/images/evb-ast2600/obmc-phosphor-image-evb-ast2600.static.mtd"
 
 exec "$QEMU" \
     -m 1G \
