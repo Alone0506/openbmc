@@ -3,6 +3,11 @@
   sensorType: 0x12
   eventReadingType: 0x6F
   offset: 0x02
+/xyz/openbmc_project/inventory/system/selClear:
+  sensorID: 0x80
+  sensorType: 0x10
+  eventReadingType: 0x6F
+  offset: 0x02
 /xyz/openbmc_project/sensors/temperature/ExternalTemp1:
   sensorID: 0x02
   sensorType: 0x01
