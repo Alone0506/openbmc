@@ -1,0 +1,331 @@
+From 416ef5e4333ff47a37d965b2f18fa0816c8d050d Mon Sep 17 00:00:00 2001
+From: ted <wii03903975@gmail.com>
+Date: Tue, 11 Aug 2026 14:14:30 +0800
+Subject: [PATCH] add C8763 temperature sensor support
+
+Upstream-Status: Inappropriate [local OpenBMC test configuration]
+
+---
+ hw/arm/Kconfig              |   1 +
+ hw/arm/aspeed_ast2600_evb.c |   5 +
+ hw/sensor/Kconfig           |   4 +
+ hw/sensor/c8763.c           | 214 ++++++++++++++++++++++++++++++++++++
+ hw/sensor/meson.build       |   1 +
+ include/hw/sensor/c8763.h   |  31 ++++++
+ 6 files changed, 256 insertions(+)
+ create mode 100644 hw/sensor/c8763.c
+ create mode 100644 include/hw/sensor/c8763.h
+
+diff --git a/hw/arm/Kconfig b/hw/arm/Kconfig
+index 4e50fb111..4e8e60d45 100644
+--- a/hw/arm/Kconfig
++++ b/hw/arm/Kconfig
+@@ -556,6 +556,7 @@ config ASPEED_SOC
+     select AT24C
+     select PCI_EXPRESS
+     select PCI_EXPRESS_ASPEED
++    select C8763
+ 
+ config MPS2
+     bool
+diff --git a/hw/arm/aspeed_ast2600_evb.c b/hw/arm/aspeed_ast2600_evb.c
+index e1463e3ef..3d58e4e27 100644
+--- a/hw/arm/aspeed_ast2600_evb.c
++++ b/hw/arm/aspeed_ast2600_evb.c
+@@ -12,6 +12,7 @@
+ #include "hw/arm/aspeed.h"
+ #include "hw/arm/aspeed_soc.h"
+ #include "hw/i2c/smbus_eeprom.h"
++#include "hw/sensor/c8763.h"
+ #include "hw/sensor/tmp105.h"
+ #include "hw/nvram/eeprom_at24c.h"
+ 
+@@ -56,6 +57,10 @@ static void ast2600_evb_i2c_init(AspeedMachineState *bmc)
+     dev = DEVICE(i2c_slave_create_simple(aspeed_i2c_get_bus(&soc->i2c, 9),
+                                          TYPE_TMP105, 0x4d));
+     object_property_set_int(OBJECT(dev), "temperature", 45000, &error_abort);
++
++    dev = DEVICE(i2c_slave_create_simple(aspeed_i2c_get_bus(&soc->i2c, 9),
++                                         TYPE_C8763, 0x22));
++    object_property_set_int(OBJECT(dev), "temperature", 42500, &error_abort);
+ }
+ 
+ static void aspeed_machine_ast2600_evb_class_init(ObjectClass *oc,
+diff --git a/hw/sensor/Kconfig b/hw/sensor/Kconfig
+index bc6331b4a..20ee29d6e 100644
+--- a/hw/sensor/Kconfig
++++ b/hw/sensor/Kconfig
+@@ -43,3 +43,7 @@ config ISL_PMBUS_VR
+ config MAX31785
+     bool
+     depends on PMBUS
++
++config C8763
++    bool
++    depends on I2C
+diff --git a/hw/sensor/c8763.c b/hw/sensor/c8763.c
+new file mode 100644
+index 000000000..32b256d6b
+--- /dev/null
++++ b/hw/sensor/c8763.c
+@@ -0,0 +1,214 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ * C8763 temperature sensor.
++ */
++
++#include "qemu/osdep.h"
++#include "hw/i2c/i2c.h"  /* I2CSlave, I2CSlaveClass, I2C_START_RECV, ...etc*/
++#include "migration/vmstate.h"
++#include "hw/sensor/c8763.h"  /* C8763State, TYPE_C8763 */
++#include "qapi/error.h"  /* error_setg */
++#include "qapi/visitor.h"  /* visit_type_int */
++#include "qemu/module.h"  /* type_init */
++
++#define C8763_REG_TEMPERATURE 0x02
++
++static void c8763_get_temperature(Object *obj, Visitor *v, const char *name,
++                                  void *opaque, Error **errp)
++{
++    C8763State *s = C8763(obj);
++    /*
++     * Since the temperature is in Q8.8 format, if Linux returns a raw value 
++     * of 6400, the actual temperature is:
++     *
++     * 6400 / 256 = 25°C
++     *
++     * It is then converted to the hwmon unit (milli-degrees Celsius):
++     *
++     * 25 × 1000 = 25000
++     */
++    int64_t value = s->temperature * 1000 / 256;
++
++    visit_type_int(v, name, &value, errp);
++}
++
++/*
++ * The temperature property is expressed in milli-degrees Celsius.
++ * s->temperature is signed 8.8 fixed point, with units of 1/256 C.
++ *
++ * When QEMU sets `temperature = 25000` from outside, this function will be
++ * called.
++ */
++static void c8763_set_temperature(Object *obj, Visitor *v, const char *name,
++                                  void *opaque, Error **errp)
++{
++    C8763State *s = C8763(obj);
++    int64_t temp;
++
++    if (!visit_type_int(v, name, &temp, errp)) {
++        return;
++    }
++
++    /* signed Q8.8 ranges: [+127.996 ~ -128) */
++    if (temp >= 128000 || temp < -128000) {
++        error_setg(errp, "value %" PRId64 " milli-degrees Celsius is out "
++                   "of range", temp);
++        return;
++    }
++
++    s->temperature = (int16_t)(temp * 256 / 1000);
++}
++
++static void c8763_read(C8763State *s)
++{
++    uint16_t temperature = s->temperature;
++
++    s->len = 0;
++
++    switch (s->pointer) {
++    case C8763_REG_TEMPERATURE:
++        s->buf[s->len++] = temperature >> 8;
++        s->buf[s->len++] = temperature;
++        break;
++    default:
++        s->buf[s->len++] = 0xff;
++        s->buf[s->len++] = 0xff;
++        break;
++    }
++}
++
++/* 
++ * When the I²C master reads one byte from the slave, QEMU will call this
++ * callback.
++ */
++static uint8_t c8763_rx(I2CSlave *i2c)
++{
++    C8763State *s = C8763(i2c);
++
++    if (s->len < sizeof(s->buf)) {
++        return s->buf[s->len++];
++    } else {
++        return 0xff;
++    }
++}
++
++/* 
++ * When the I²C master writes one byte from the slave, QEMU will call this
++ * callback.
++ */
++static int c8763_tx(I2CSlave *i2c, uint8_t data)
++{
++    C8763State *s = C8763(i2c);
++
++    if (s->len == 0) {
++        s->pointer = data;
++    }
++    s->len++;
++
++    return 0;
++}
++
++static int c8763_event(I2CSlave *i2c, enum i2c_event event)
++{
++    C8763State *s = C8763(i2c);
++
++    /* 
++     * The I²C master is ready to start reading data from the C8763.
++     */
++    if (event == I2C_START_RECV) {
++        c8763_read(s);
++    }
++
++    s->len = 0;
++    return 0;
++}
++
++static const VMStateDescription vmstate_c8763 = {
++    .name = "C8763",
++    .version_id = 0,
++    .minimum_version_id = 0,
++    .fields = (const VMStateField[]) {
++        VMSTATE_UINT8(len, C8763State),
++        VMSTATE_UINT8_ARRAY(buf, C8763State, 2),
++        VMSTATE_UINT8(pointer, C8763State),
++        VMSTATE_INT16(temperature, C8763State),
++        VMSTATE_I2C_SLAVE(i2c, C8763State),
++        VMSTATE_END_OF_LIST()
++    }
++};
++
++/* Simulates the initial state of the C8763 after power-on or reset. */
++static void c8763_reset(I2CSlave *i2c)
++{
++    C8763State *s = C8763(i2c);
++
++    s->temperature = 0;
++    s->pointer = 0;
++}
++
++/* This means the device is ready to start working. */
++static void c8763_realize(DeviceState *dev, Error **errp)
++{
++    I2CSlave *i2c = I2C_SLAVE(dev);
++    C8763State *s = C8763(i2c);
++
++    c8763_reset(&s->i2c);
++}
++
++/* 
++ * Add a QOM property: temperature to C8763.
++ * type: int
++ * get property function: c8763_get_temperature
++ * set property function: c8763_set_temperature.
++ */
++static void c8763_initfn(Object *obj)
++{
++    object_property_add(obj, "temperature", "int",
++                        c8763_get_temperature,
++                        c8763_set_temperature, NULL, NULL);
++}
++
++static void c8763_class_init(ObjectClass *klass, const void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++    I2CSlaveClass *k = I2C_SLAVE_CLASS(klass);
++
++    dc->realize = c8763_realize;
++    k->event = c8763_event;
++    k->recv = c8763_rx;
++    k->send = c8763_tx;
++    dc->vmsd = &vmstate_c8763;
++}
++
++static const TypeInfo c8763_info = {
++    .name          = TYPE_C8763,
++    .parent        = TYPE_I2C_SLAVE,
++    .instance_size = sizeof(C8763State),
++    .instance_init = c8763_initfn,
++    .class_init    = c8763_class_init,
++};
++
++static void c8763_register_types(void)
++{
++    /* Add c8763 information to QEMU. */
++    type_register_static(&c8763_info);
++}
++
++/* When QEMU starts up, run it */
++/*
++ * QEMU starts
++ *    │
++ *    v
++ * type_init()
++ *    │
++ *    v
++ * c8763_register_types()
++ *    │
++ *    v
++ * type_register_static()
++ *    │
++ *    v
++ * QEMU knows about "c8763"
++ */
++type_init(c8763_register_types)
++
+diff --git a/hw/sensor/meson.build b/hw/sensor/meson.build
+index 420fdc335..254b0496f 100644
+--- a/hw/sensor/meson.build
++++ b/hw/sensor/meson.build
+@@ -8,3 +8,4 @@ system_ss.add(when: 'CONFIG_MAX34451', if_true: files('max34451.c'))
+ system_ss.add(when: 'CONFIG_LSM303DLHC_MAG', if_true: files('lsm303dlhc_mag.c'))
+ system_ss.add(when: 'CONFIG_ISL_PMBUS_VR', if_true: files('isl_pmbus_vr.c'))
+ system_ss.add(when: 'CONFIG_MAX31785', if_true: files('max31785.c'))
++system_ss.add(when: 'CONFIG_C8763', if_true: files('c8763.c'))
+diff --git a/include/hw/sensor/c8763.h b/include/hw/sensor/c8763.h
+new file mode 100644
+index 000000000..7c2f54fa2
+--- /dev/null
++++ b/include/hw/sensor/c8763.h
+@@ -0,0 +1,31 @@
++/*
++ * C8763 temperature sensor
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++#ifndef QEMU_C8763_H
++#define QEMU_C8763_H
++
++#include "hw/i2c/i2c.h"
++#include "qom/object.h"
++
++#define TYPE_C8763 "c8763"
++OBJECT_DECLARE_SIMPLE_TYPE(C8763State, C8763)
++
++// Linux: master, c8763: slave
++struct C8763State {
++    /*< private >*/
++    I2CSlave i2c;
++    /*< public >*/
++
++    uint8_t len;
++    /* Stores the datas that will be sent to Linux */
++    uint8_t buf[2];
++
++    /* Linux currently specifies which register to read */
++    uint8_t pointer;
++    /* The simulated temperature */
++    int16_t temperature;
++};
++
++#endif

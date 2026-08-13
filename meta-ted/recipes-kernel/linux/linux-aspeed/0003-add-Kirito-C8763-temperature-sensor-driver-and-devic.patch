@@ -1,0 +1,291 @@
+From 0d94404f374374adce97345cda50542323d7ded4 Mon Sep 17 00:00:00 2001
+From: ted <wii03903975@gmail.com>
+Date: Fri, 7 Aug 2026 17:51:55 +0800
+Subject: [PATCH] add Kirito C8763 temperature sensor driver and device tree
+ bindings
+
+Upstream-Status: Inappropriate [local OpenBMC test configuration]
+
+---
+ .../bindings/hwmon/kirito,c8763.yaml          |  42 ++++++
+ .../devicetree/bindings/vendor-prefixes.yaml  |   2 +
+ MAINTAINERS                                   |   7 +
+ .../boot/dts/aspeed/aspeed-ast2600-evb.dts    |   5 +
+ drivers/hwmon/Kconfig                         |  11 ++
+ drivers/hwmon/Makefile                        |   1 +
+ drivers/hwmon/c8763.c                         | 136 ++++++++++++++++++
+ 7 files changed, 204 insertions(+)
+ create mode 100644 Documentation/devicetree/bindings/hwmon/kirito,c8763.yaml
+ create mode 100644 drivers/hwmon/c8763.c
+
+diff --git a/Documentation/devicetree/bindings/hwmon/kirito,c8763.yaml b/Documentation/devicetree/bindings/hwmon/kirito,c8763.yaml
+new file mode 100644
+index 000000000000..1647f034ff7a
+--- /dev/null
++++ b/Documentation/devicetree/bindings/hwmon/kirito,c8763.yaml
+@@ -0,0 +1,42 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/hwmon/Kirito,c8763.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Kirito C8763 temperature sensor
++
++maintainers:
++  - Kirigaya Kazuto <kirito@kadokawa.co.jp>
++
++description: |
++  The Kirito C8763 is an I2C temperature sensor. Its temperature register
++  contains a signed Q8.8 value in degrees Celsius.
++
++properties:
++  compatible:
++    const: kirito,c8763
++
++  reg:
++    maxItems: 1
++
++required:
++  - compatible
++  - reg
++
++allOf:
++  - $ref: hwmon-common.yaml#
++
++unevaluatedProperties: false
++
++examples:
++  - |
++    i2c {
++        #address-cells = <1>;
++        #size-cells = <0>;
++
++        temperature-sensor@22 {
++            compatible = "kirito,c8763";
++            reg = <0x22>;
++        };
++    };
+diff --git a/Documentation/devicetree/bindings/vendor-prefixes.yaml b/Documentation/devicetree/bindings/vendor-prefixes.yaml
+index f1d1882009ba..d8dd0562b594 100644
+--- a/Documentation/devicetree/bindings/vendor-prefixes.yaml
++++ b/Documentation/devicetree/bindings/vendor-prefixes.yaml
+@@ -855,6 +855,8 @@ patternProperties:
+     description: Kingnovel Technology Co., Ltd.
+   "^kionix,.*":
+     description: Kionix, Inc.
++  "^kirito,.*":
++    description: Kirito
+   "^kobo,.*":
+     description: Rakuten Kobo Inc.
+   "^kobol,.*":
+diff --git a/MAINTAINERS b/MAINTAINERS
+index d6530d418ddd..c24e8302ec25 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -13940,6 +13940,13 @@ L:	linux-iio@vger.kernel.org
+ S:	Supported
+ F:	drivers/iio/accel/kionix-kx022a*
+ 
++KIRITO C8763 TEMPERATURE SENSOR DRIVER
++M:	Kirigaya Kazuto <kirito@kadokawa.co.jp>
++L:	linux-hwmon@vger.kernel.org
++S:	Maintained
++F:	Documentation/devicetree/bindings/hwmon/kirito,c8763.yaml
++F:	drivers/hwmon/c8763.c
++
+ KMEMLEAK
+ M:	Catalin Marinas <catalin.marinas@arm.com>
+ S:	Maintained
+diff --git a/arch/arm/boot/dts/aspeed/aspeed-ast2600-evb.dts b/arch/arm/boot/dts/aspeed/aspeed-ast2600-evb.dts
+index 17b732880656..2937b11b50b1 100644
+--- a/arch/arm/boot/dts/aspeed/aspeed-ast2600-evb.dts
++++ b/arch/arm/boot/dts/aspeed/aspeed-ast2600-evb.dts
+@@ -273,6 +273,11 @@ tmp75@4d {
+ 		compatible = "ti,tmp75";
+ 		reg = <0x4d>;
+ 	};
++
++	temperature-sensor@22 {
++		compatible = "kirito,c8763";
++		reg = <0x22>;
++	};
+ };
+ 
+ &i2c12 {
+diff --git a/drivers/hwmon/Kconfig b/drivers/hwmon/Kconfig
+index 2a71b6e834b0..306782bbe1dc 100644
+--- a/drivers/hwmon/Kconfig
++++ b/drivers/hwmon/Kconfig
+@@ -483,6 +483,17 @@ config SENSORS_BT1_PVT_ALARMS
+ 	  the data conversion will be periodically performed and the data will be
+ 	  saved in the internal driver cache.
+ 
++config SENSORS_C8763
++	tristate "Kirito C8763 temperature sensor"
++	depends on I2C
++	select REGMAP_I2C
++	help
++	  If you say yes here, you get support for the Kirito C8763
++	  Q8.8 I2C temperature sensor.
++
++	  This driver can also be built as a module. If so, the module
++	  will be called c8763.
++
+ config SENSORS_CGBC
+ 	tristate "Congatec Board Controller Sensors"
+ 	depends on MFD_CGBC
+diff --git a/drivers/hwmon/Makefile b/drivers/hwmon/Makefile
+index 73b2abdcc6dd..d79afc2361ea 100644
+--- a/drivers/hwmon/Makefile
++++ b/drivers/hwmon/Makefile
+@@ -59,6 +59,7 @@ obj-$(CONFIG_SENSORS_ASUS_ROG_RYUJIN)	+= asus_rog_ryujin.o
+ obj-$(CONFIG_SENSORS_ATXP1)	+= atxp1.o
+ obj-$(CONFIG_SENSORS_AXI_FAN_CONTROL) += axi-fan-control.o
+ obj-$(CONFIG_SENSORS_BT1_PVT)	+= bt1-pvt.o
++obj-$(CONFIG_SENSORS_C8763)	+= c8763.o
+ obj-$(CONFIG_SENSORS_CGBC)	+= cgbc-hwmon.o
+ obj-$(CONFIG_SENSORS_CHIPCAP2) += chipcap2.o
+ obj-$(CONFIG_SENSORS_CORETEMP)	+= coretemp.o
+diff --git a/drivers/hwmon/c8763.c b/drivers/hwmon/c8763.c
+new file mode 100644
+index 000000000000..698e9b9299a6
+--- /dev/null
++++ b/drivers/hwmon/c8763.c
+@@ -0,0 +1,136 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++#include <linux/err.h>
++#include <linux/hwmon.h>
++#include <linux/i2c.h>
++#include <linux/math.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/regmap.h>
++
++#define C8763_REG_TEMP 0x02
++
++/*
++ * This callback decides which sysfs files are created.
++ * 
++ * Return 0444: the read-only temp1_input file
++ * Return 0: to hide an unsupported file
++ */
++static umode_t c8763_is_visible(const void *data, enum hwmon_sensor_types type,
++				u32 attr, int channel)
++{
++	if (type == hwmon_temp && attr == hwmon_temp_input && channel == 0)
++		return 0444;
++
++	return 0;
++}
++
++/* The hwmon core calls this callback when a user reads temp1_input. */
++static int c8763_read(struct device *dev, enum hwmon_sensor_types type,
++		       u32 attr, int channel, long *val)
++{
++	struct regmap *regmap = dev_get_drvdata(dev);
++	unsigned int regval;
++	s16 raw;
++	int ret;
++
++	if (type != hwmon_temp || attr != hwmon_temp_input || channel != 0)
++		return -EOPNOTSUPP;
++
++	/* Regmap converts the big-endian value as configured below. */
++	ret = regmap_read(regmap, C8763_REG_TEMP, &regval);
++	if (ret < 0)
++		return ret;
++
++	raw = (s16)regval;
++
++	/*
++	 * Convert signed Q8.8 degrees Celsius to millidegrees Celsius.
++	 * 
++	 * For example:
++	 * raw: 0x1900 -> 25000
++	 *      0xfb80 -> -4500
++	 */
++	*val = DIV_ROUND_CLOSEST((long)raw * 1000, 256);
++
++	return 0;
++}
++
++static const struct hwmon_channel_info * const c8763_info[] = {
++	HWMON_CHANNEL_INFO(temp, HWMON_T_INPUT),
++	NULL
++};
++
++/*
++ * The hwmon core uses is_visible() when it creates sysfs files and
++ * read() when a file is read.
++ */
++static const struct hwmon_ops c8763_hwmon_ops = {
++	.is_visible = c8763_is_visible,
++	.read = c8763_read,
++};
++
++static const struct hwmon_chip_info c8763_chip_info = {
++	.ops = &c8763_hwmon_ops,
++	.info = c8763_info,
++};
++
++/*
++ * Register addresses are 8 bits wide, and register values are 16-bit
++ * big-endian numbers. Register 0x02 is the highest valid address.
++ *
++ * Ref: include/linux/regmap.h:255
++ */
++static const struct regmap_config c8763_regmap_config = {
++	.reg_bits = 8,
++	.val_bits = 16,
++	.max_register = C8763_REG_TEMP,
++	.val_format_endian = REGMAP_ENDIAN_BIG,
++};
++
++static int c8763_probe(struct i2c_client *client)
++{
++	struct device *dev = &client->dev;
++	struct device *hwmon_dev;
++	struct regmap *regmap;
++
++	/* The managed regmap is freed when the device is removed. */
++	regmap = devm_regmap_init_i2c(client, &c8763_regmap_config);
++	if (IS_ERR(regmap))
++		return dev_err_probe(dev, PTR_ERR(regmap),
++				     "failed to initialize regmap\n");
++
++	hwmon_dev = devm_hwmon_device_register_with_info(dev, client->name,
++							 regmap,
++							 &c8763_chip_info,
++							 NULL);
++
++	return PTR_ERR_OR_ZERO(hwmon_dev);
++}
++
++static const struct of_device_id c8763_of_match[] = {
++	{ .compatible = "kirito,c8763" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, c8763_of_match);
++
++static const struct i2c_device_id c8763_id[] = {
++	{ "c8763" },
++	{ }
++};
++MODULE_DEVICE_TABLE(i2c, c8763_id);
++
++static struct i2c_driver c8763_driver = {
++	.driver = {
++		.name = "c8763",
++		.of_match_table = c8763_of_match,
++	},
++	/* The I2C core calls probe after a successful match. */
++	.probe = c8763_probe,
++	.id_table = c8763_id,
++};
++module_i2c_driver(c8763_driver);
++
++MODULE_AUTHOR("Kirigaya Kazuto <kirito@kadokawa.co.jp>");
++MODULE_DESCRIPTION("Kirito C8763 temperature sensor driver");
++MODULE_LICENSE("GPL");

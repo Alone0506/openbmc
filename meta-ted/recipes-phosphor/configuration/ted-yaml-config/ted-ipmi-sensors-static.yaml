@@ -132,3 +132,22 @@
         Offsets:
           255:
             type: double
+0x30:
+  entityID: 55
+  entityInstance: 1
+  sensorType: 0x01
+  multiplierM: 4
+  mutability: Mutability::Read
+  path: /xyz/openbmc_project/sensors/temperature/C8763_Temp
+  rExp: -1
+  readingType: readingData
+  sensorNamePattern: nameLeaf
+  sensorReadingType: 1
+  serviceInterface: org.freedesktop.DBus.Properties
+  unit: xyz.openbmc_project.Sensor.Value.Unit.DegreesC
+  interfaces:
+    xyz.openbmc_project.Sensor.Value:
+      Value:
+        Offsets:
+          255:
+            type: double
