@@ -1,0 +1,53 @@
+From 03c51ac1ea3d86be14500257beedd9b86971acbe Mon Sep 17 00:00:00 2001
+From: Alone0506 <wii03903975@gmail.com>
+Date: Sun, 13 Sep 2026 23:21:18 +0800
+Subject: [PATCH] Add the LTC2497 ADC on bus 9 at address 0x50, and define 16
+ channels
+
+Upstream-Status: Inappropriate [local OpenBMC test configuration]
+
+---
+ .../boot/dts/aspeed/aspeed-ast2600-evb.dts    | 23 +++++++++++++++++++
+ 1 file changed, 23 insertions(+)
+
+diff --git a/arch/arm/boot/dts/aspeed/aspeed-ast2600-evb.dts b/arch/arm/boot/dts/aspeed/aspeed-ast2600-evb.dts
+index 2937b11b50b1..0c148b691d4e 100644
+--- a/arch/arm/boot/dts/aspeed/aspeed-ast2600-evb.dts
++++ b/arch/arm/boot/dts/aspeed/aspeed-ast2600-evb.dts
+@@ -82,6 +82,22 @@ vccq_sdhci1: regulator-vccq-sdhci1 {
+ 		states = <3300000 1>,
+ 			 <1800000 0>;
+ 	};
++
++	voltage_mon_reg: voltage-mon-regulator {
++		compatible = "regulator-fixed";
++		regulator-name = "ltc2497_reg";
++		regulator-min-microvolt = <3300000>;
++		regulator-max-microvolt = <3300000>;
++		regulator-always-on;
++	};
++
++	iio-hwmon {
++		compatible = "iio-hwmon";
++		io-channels =
++			<&adc 0>,  <&adc 1>, <&adc 2>,  <&adc 3>, <&adc 4>,  <&adc 5>, 
++			<&adc 6>,  <&adc 7>, <&adc 8>,  <&adc 9>, <&adc 10>, <&adc 11>,
++			<&adc 12>, <&adc 13>, <&adc 14>, <&adc 15>;
++	};
+ };
+ 
+ &mdio0 {
+@@ -278,6 +294,13 @@ temperature-sensor@22 {
+ 		compatible = "kirito,c8763";
+ 		reg = <0x22>;
+ 	};
++
++	adc: adc@50 {
++		compatible = "lltc,ltc2497";
++		reg = <0x50>;
++		vref-supply = <&voltage_mon_reg>;
++		#io-channel-cells = <1>;
++	};
+ };
+ 
+ &i2c12 {
