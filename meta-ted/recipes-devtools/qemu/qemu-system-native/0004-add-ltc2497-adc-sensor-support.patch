@@ -1,0 +1,323 @@
+From 87a20686a226ad7cb25e1e8f4bc9c3d1b9932a05 Mon Sep 17 00:00:00 2001
+From: Alone0506 <wii03903975@gmail.com>
+Date: Sun, 13 Sep 2026 23:56:22 +0800
+Subject: [PATCH] add ltc2497 adc sensor support
+
+Upstream-Status: Inappropriate [local OpenBMC test configuration]
+
+---
+ hw/arm/Kconfig              |   1 +
+ hw/arm/aspeed_ast2600_evb.c |  26 ++++++
+ hw/sensor/Kconfig           |   4 +
+ hw/sensor/ltc2497.c         | 180 ++++++++++++++++++++++++++++++++++++
+ hw/sensor/meson.build       |   1 +
+ include/hw/sensor/ltc2497.h |  29 ++++++
+ 6 files changed, 241 insertions(+)
+ create mode 100644 hw/sensor/ltc2497.c
+ create mode 100644 include/hw/sensor/ltc2497.h
+
+diff --git a/hw/arm/Kconfig b/hw/arm/Kconfig
+index 4e8e60d45..e3b7844d8 100644
+--- a/hw/arm/Kconfig
++++ b/hw/arm/Kconfig
+@@ -557,6 +557,7 @@ config ASPEED_SOC
+     select PCI_EXPRESS
+     select PCI_EXPRESS_ASPEED
+     select C8763
++    select LTC2497
+ 
+ config MPS2
+     bool
+diff --git a/hw/arm/aspeed_ast2600_evb.c b/hw/arm/aspeed_ast2600_evb.c
+index 3d58e4e27..97f59ebf2 100644
+--- a/hw/arm/aspeed_ast2600_evb.c
++++ b/hw/arm/aspeed_ast2600_evb.c
+@@ -13,6 +13,7 @@
+ #include "hw/arm/aspeed_soc.h"
+ #include "hw/i2c/smbus_eeprom.h"
+ #include "hw/sensor/c8763.h"
++#include "hw/sensor/ltc2497.h"
+ #include "hw/sensor/tmp105.h"
+ #include "hw/nvram/eeprom_at24c.h"
+ 
+@@ -37,6 +38,13 @@ static const uint8_t ted_bmc_fruid[] = {
+ };
+ static const size_t ted_bmc_fruid_len = sizeof(ted_bmc_fruid);
+ 
++static const uint32_t ltc2497_inputs_uv[LTC2497_NUM_INPUTS] = {
++    1000000, 1010000, 1020000, 1030000,
++    1040000, 1050000, 1060000, 1070000,
++    1080000, 1090000, 1100000, 1110000,
++    1120000, 1130000, 1140000, 1150000,
++};
++
+ static void ast2600_evb_i2c_init(AspeedMachineState *bmc)
+ {
+     AspeedSoCState *soc = bmc->soc;
+@@ -61,6 +69,24 @@ static void ast2600_evb_i2c_init(AspeedMachineState *bmc)
+     dev = DEVICE(i2c_slave_create_simple(aspeed_i2c_get_bus(&soc->i2c, 9),
+                                          TYPE_C8763, 0x22));
+     object_property_set_int(OBJECT(dev), "temperature", 42500, &error_abort);
++
++    I2CSlave *adc = i2c_slave_new(TYPE_LTC2497, 0x50);
++    unsigned int i;
++
++    dev = DEVICE(adc);
++    object_property_set_uint(OBJECT(dev), "vref", 3300000, &error_abort);
++    object_property_set_uint(OBJECT(dev), "common", 0, &error_abort);
++
++    for (i = 0; i < ARRAY_SIZE(ltc2497_inputs_uv); i++) {
++        g_autofree char *property = g_strdup_printf("input[%u]", i);
++
++        object_property_set_uint(OBJECT(dev), property,
++                                 ltc2497_inputs_uv[i], &error_abort);
++    }
++
++    i2c_slave_realize_and_unref(adc,
++                                aspeed_i2c_get_bus(&soc->i2c, 9),
++                                &error_abort);
+ }
+ 
+ static void aspeed_machine_ast2600_evb_class_init(ObjectClass *oc,
+diff --git a/hw/sensor/Kconfig b/hw/sensor/Kconfig
+index 20ee29d6e..8498aa639 100644
+--- a/hw/sensor/Kconfig
++++ b/hw/sensor/Kconfig
+@@ -47,3 +47,7 @@ config MAX31785
+ config C8763
+     bool
+     depends on I2C
++
++config LTC2497
++    bool
++    depends on I2C
+diff --git a/hw/sensor/ltc2497.c b/hw/sensor/ltc2497.c
+new file mode 100644
+index 000000000..4a9e8fb82
+--- /dev/null
++++ b/hw/sensor/ltc2497.c
+@@ -0,0 +1,180 @@
++/*
++ * Analog Devices/Linear Technology LTC2497 ADC
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#include "qemu/osdep.h"
++#include "hw/sensor/ltc2497.h"
++#include "migration/vmstate.h"
++#include "qemu/log.h"
++#include "qemu/module.h"
++
++#define LTC2497_ENABLE             0xa0
++#define LTC2497_SINGLE_ENDED       BIT(4)
++#define LTC2497_ODD_SIGN           BIT(3)
++#define LTC2497_CHANNEL_MASK       0x07
++#define LTC2497_OFFSET_CODE        (1 << 17)
++#define LTC2497_FULL_SCALE_CODE    (1 << 16)
++#define LTC2497_DEFAULT_VREF_UV    2500000
++
++static int64_t ltc2497_diff_uv(LTC2497State *s)
++{
++    unsigned int pair = (s->command & LTC2497_CHANNEL_MASK) * 2;
++
++    if (s->command & LTC2497_SINGLE_ENDED) {
++        unsigned int channel = pair + !!(s->command & LTC2497_ODD_SIGN);
++
++        return (int64_t)s->input_uv[channel] - s->common_uv;
++    }
++
++    if (s->command & LTC2497_ODD_SIGN) {
++        return (int64_t)s->input_uv[pair + 1] - s->input_uv[pair];
++    }
++
++    return (int64_t)s->input_uv[pair] - s->input_uv[pair + 1];
++}
++
++static int32_t ltc2497_convert(LTC2497State *s)
++{
++    int64_t input_uv = ltc2497_diff_uv(s);
++
++    if (!s->vref_uv) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "%s: reference voltage must be nonzero\n", __func__);
++        return 0;
++    }
++
++    /* The differential full-scale range is -Vref / 2 to +Vref / 2. */
++    if (input_uv * 2 >= s->vref_uv) {
++        return LTC2497_FULL_SCALE_CODE;
++    }
++
++    if (input_uv * 2 < -(int64_t)s->vref_uv) {
++        return -LTC2497_FULL_SCALE_CODE - 1;
++    }
++
++    return input_uv * LTC2497_OFFSET_CODE / s->vref_uv;
++}
++
++static void ltc2497_prepare_result(LTC2497State *s)
++{
++    int32_t raw = ltc2497_convert(s);
++    uint32_t value = (raw + LTC2497_OFFSET_CODE) << 6;
++
++    s->buf[0] = value >> 16;
++    s->buf[1] = value >> 8;
++    s->buf[2] = value;
++    s->pos = 0;
++}
++
++static uint8_t ltc2497_rx(I2CSlave *i2c)
++{
++    LTC2497State *s = LTC2497(i2c);
++
++    if (s->pos < sizeof(s->buf)) {
++        return s->buf[s->pos++];
++    }
++
++    return 0xff;
++}
++
++static int ltc2497_tx(I2CSlave *i2c, uint8_t data)
++{
++    LTC2497State *s = LTC2497(i2c);
++
++    /* EN=1 and the mandatory control bit select commands 0xa0-0xbf. */
++    if ((data & 0xe0) != LTC2497_ENABLE) {
++        qemu_log_mask(LOG_GUEST_ERROR,
++                      "%s: invalid input selection command 0x%02x\n",
++                      __func__, data);
++        return 1;
++    }
++
++    s->command = data;
++    return 0;
++}
++
++static int ltc2497_event(I2CSlave *i2c, enum i2c_event event)
++{
++    LTC2497State *s = LTC2497(i2c);
++
++    if (event == I2C_START_RECV) {
++        ltc2497_prepare_result(s);
++    }
++
++    return 0;
++}
++
++static void ltc2497_reset_enter(Object *obj, ResetType type)
++{
++    LTC2497State *s = LTC2497(obj);
++
++    s->command = LTC2497_ENABLE;
++    memset(s->buf, 0, sizeof(s->buf));
++    s->pos = 0;
++}
++
++static const VMStateDescription vmstate_ltc2497 = {
++    .name = "LTC2497",
++    .version_id = 0,
++    .minimum_version_id = 0,
++    .fields = (const VMStateField[]) {
++        VMSTATE_UINT32_ARRAY(input_uv, LTC2497State, LTC2497_NUM_INPUTS),
++        VMSTATE_UINT32(common_uv, LTC2497State),
++        VMSTATE_UINT32(vref_uv, LTC2497State),
++        VMSTATE_UINT8(command, LTC2497State),
++        VMSTATE_UINT8_ARRAY(buf, LTC2497State, 3),
++        VMSTATE_UINT8(pos, LTC2497State),
++        VMSTATE_I2C_SLAVE(i2c, LTC2497State),
++        VMSTATE_END_OF_LIST()
++    }
++};
++
++static void ltc2497_init(Object *obj)
++{
++    LTC2497State *s = LTC2497(obj);
++    int i;
++
++    s->vref_uv = LTC2497_DEFAULT_VREF_UV;
++    s->command = LTC2497_ENABLE;
++
++    for (i = 0; i < LTC2497_NUM_INPUTS; i++) {
++        object_property_add_uint32_ptr(obj, "input[*]", &s->input_uv[i],
++                                       OBJ_PROP_FLAG_READWRITE);
++    }
++
++    object_property_add_uint32_ptr(obj, "common", &s->common_uv,
++                                   OBJ_PROP_FLAG_READWRITE);
++    object_property_add_uint32_ptr(obj, "vref", &s->vref_uv,
++                                   OBJ_PROP_FLAG_READWRITE);
++}
++
++static void ltc2497_class_init(ObjectClass *klass, const void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++    I2CSlaveClass *sc = I2C_SLAVE_CLASS(klass);
++    ResettableClass *rc = RESETTABLE_CLASS(klass);
++
++    dc->desc = "LTC2497 16-channel ADC";
++    dc->vmsd = &vmstate_ltc2497;
++    sc->event = ltc2497_event;
++    sc->recv = ltc2497_rx;
++    sc->send = ltc2497_tx;
++    rc->phases.enter = ltc2497_reset_enter;
++}
++
++static const TypeInfo ltc2497_info = {
++    .name = TYPE_LTC2497,
++    .parent = TYPE_I2C_SLAVE,
++    .instance_size = sizeof(LTC2497State),
++    .instance_init = ltc2497_init,
++    .class_init = ltc2497_class_init,
++};
++
++static void ltc2497_register_types(void)
++{
++    type_register_static(&ltc2497_info);
++}
++
++type_init(ltc2497_register_types)
+diff --git a/hw/sensor/meson.build b/hw/sensor/meson.build
+index 254b0496f..e0440a0ad 100644
+--- a/hw/sensor/meson.build
++++ b/hw/sensor/meson.build
+@@ -9,3 +9,4 @@ system_ss.add(when: 'CONFIG_LSM303DLHC_MAG', if_true: files('lsm303dlhc_mag.c'))
+ system_ss.add(when: 'CONFIG_ISL_PMBUS_VR', if_true: files('isl_pmbus_vr.c'))
+ system_ss.add(when: 'CONFIG_MAX31785', if_true: files('max31785.c'))
+ system_ss.add(when: 'CONFIG_C8763', if_true: files('c8763.c'))
++system_ss.add(when: 'CONFIG_LTC2497', if_true: files('ltc2497.c'))
+diff --git a/include/hw/sensor/ltc2497.h b/include/hw/sensor/ltc2497.h
+new file mode 100644
+index 000000000..7d11651fb
+--- /dev/null
++++ b/include/hw/sensor/ltc2497.h
+@@ -0,0 +1,29 @@
++/*
++ * Analog Devices/Linear Technology LTC2497 ADC
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ */
++
++#ifndef HW_SENSOR_LTC2497_H
++#define HW_SENSOR_LTC2497_H
++
++#include "hw/i2c/i2c.h"
++
++#define TYPE_LTC2497 "ltc2497"
++OBJECT_DECLARE_SIMPLE_TYPE(LTC2497State, LTC2497)
++
++#define LTC2497_NUM_INPUTS 16
++
++struct LTC2497State {
++    I2CSlave i2c;
++
++    uint32_t input_uv[LTC2497_NUM_INPUTS];
++    uint32_t common_uv;
++    uint32_t vref_uv;
++
++    uint8_t command;
++    uint8_t buf[3];
++    uint8_t pos;
++};
++
++#endif /* HW_SENSOR_LTC2497_H */
