@@ -49,6 +49,12 @@
 [submodule "meta-ted/recipes-phosphor/leds/phosphor-led-manager"]
 	path = meta-ted/recipes-phosphor/leds/phosphor-led-manager
 	url = https://github.com/Alone0506/phosphor-led-manager.git
+[submodule "meta-ted/recipes-phosphor/pldm/pldm"]
+	path = meta-ted/recipes-phosphor/pldm/pldm
+	url = https://github.com/Alone0506/pldm.git
 [submodule "meta-ted/recipes-support/mctp/mctp"]
 	path = meta-ted/recipes-support/mctp/mctp
-	url = https://github.com/CodeConstruct/mctp.git
+	url = https://github.com/Alone0506/mctp.git
+[submodule "meta-ted/recipes-extended/sdbusplus/sdbusplus"]
+	path = meta-ted/recipes-extended/sdbusplus/sdbusplus
+	url = https://github.com/Alone0506/sdbusplus.git
