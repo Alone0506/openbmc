@@ -7,12 +7,12 @@ Upstream-Status: Inappropriate [local OpenBMC test configuration]
 
 ---
  hw/arm/Kconfig              |   1 +
- hw/arm/aspeed_ast2600_evb.c |  26 ++++++
+ hw/arm/aspeed_ast2600_evb.c |  43 +++++++++
  hw/sensor/Kconfig           |   4 +
  hw/sensor/ltc2497.c         | 180 ++++++++++++++++++++++++++++++++++++
  hw/sensor/meson.build       |   1 +
  include/hw/sensor/ltc2497.h |  29 ++++++
- 6 files changed, 241 insertions(+)
+ 6 files changed, 258 insertions(+)
  create mode 100644 hw/sensor/ltc2497.c
  create mode 100644 include/hw/sensor/ltc2497.h
 
@@ -29,7 +29,7 @@ index 4e8e60d45..e3b7844d8 100644
  config MPS2
      bool
 diff --git a/hw/arm/aspeed_ast2600_evb.c b/hw/arm/aspeed_ast2600_evb.c
-index 3d58e4e27..97f59ebf2 100644
+index 3d58e4e27..4a548fa73 100644
 --- a/hw/arm/aspeed_ast2600_evb.c
 +++ b/hw/arm/aspeed_ast2600_evb.c
 @@ -13,6 +13,7 @@
@@ -40,21 +40,38 @@ index 3d58e4e27..97f59ebf2 100644
  #include "hw/sensor/tmp105.h"
  #include "hw/nvram/eeprom_at24c.h"
  
-@@ -37,6 +38,13 @@ static const uint8_t ted_bmc_fruid[] = {
+@@ -37,6 +38,30 @@ static const uint8_t ted_bmc_fruid[] = {
  };
  static const size_t ted_bmc_fruid_len = sizeof(ted_bmc_fruid);
  
 +static const uint32_t ltc2497_inputs_uv[LTC2497_NUM_INPUTS] = {
-+    1000000, 1010000, 1020000, 1030000,
-+    1040000, 1050000, 1060000, 1070000,
-+    1080000, 1090000, 1100000, 1110000,
-+    1120000, 1130000, 1140000, 1150000,
++    /* CH0-CH9: displayed rail voltage / 2.2 */
++    [0]  = 454545,   /* 1.00 V */
++    [1]  = 459091,   /* 1.01 V */
++    [2]  = 463636,   /* 1.02 V */
++    [3]  = 468182,   /* 1.03 V */
++    [4]  = 472727,   /* 1.04 V */
++    [5]  = 477273,   /* 1.05 V */
++    [6]  = 481818,   /* 1.06 V */
++    [7]  = 486364,   /* 1.07 V */
++    [8]  = 490909,   /* 1.08 V */
++    [9]  = 495455,   /* 1.09 V */
++
++    /* CH10-CH11: displayed rail voltage / 8 */
++    [10] = 250000,   /* 2.0 V */
++    [11] = 262500,   /* 2.1 V */
++
++    /* CH12-CH15: displayed rail voltage / 16 */
++    [12] = 1125000,  /* 18.0 V */
++    [13] = 1187500,  /* 19.0 V */
++    [14] = 1250000,  /* 20.0 V */
++    [15] = 1312500,  /* 21.0 V */
 +};
 +
  static void ast2600_evb_i2c_init(AspeedMachineState *bmc)
  {
      AspeedSoCState *soc = bmc->soc;
-@@ -61,6 +69,24 @@ static void ast2600_evb_i2c_init(AspeedMachineState *bmc)
+@@ -61,6 +86,24 @@ static void ast2600_evb_i2c_init(AspeedMachineState *bmc)
      dev = DEVICE(i2c_slave_create_simple(aspeed_i2c_get_bus(&soc->i2c, 9),
                                           TYPE_C8763, 0x22));
      object_property_set_int(OBJECT(dev), "temperature", 42500, &error_abort);
