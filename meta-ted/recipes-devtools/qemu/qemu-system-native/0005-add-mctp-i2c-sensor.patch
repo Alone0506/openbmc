@@ -1,0 +1,1701 @@
+From de72f48327478b3d2c6a8c176450355c6d741fe3 Mon Sep 17 00:00:00 2001
+From: ted <wii03903975@gmail.com>
+Date: Tue, 3 Nov 2026 17:24:09 +0800
+Subject: [PATCH] add mctp-i2c-sensor
+
+Upstream-Status: Inappropriate [local OpenBMC test configuration]
+
+---
+ docs/system/device-emulation.rst        |   1 +
+ docs/system/devices/mctp-i2c-sensor.rst | 234 +++++++
+ hw/arm/Kconfig                          |   1 +
+ hw/arm/aspeed_ast2600_evb.c             |  10 +
+ hw/sensor/Kconfig                       |   4 +
+ hw/sensor/mctp-i2c-sensor.c             | 865 ++++++++++++++++++++++++
+ hw/sensor/meson.build                   |   1 +
+ include/hw/sensor/mctp-i2c-sensor.h     |   7 +
+ tests/qtest/mctp-i2c-sensor-test.c      | 461 +++++++++++++
+ tests/qtest/meson.build                 |   2 +
+ 10 files changed, 1586 insertions(+)
+ create mode 100644 docs/system/devices/mctp-i2c-sensor.rst
+ create mode 100644 hw/sensor/mctp-i2c-sensor.c
+ create mode 100644 include/hw/sensor/mctp-i2c-sensor.h
+ create mode 100644 tests/qtest/mctp-i2c-sensor-test.c
+
+diff --git a/docs/system/device-emulation.rst b/docs/system/device-emulation.rst
+index 40054bb7d..42bde3933 100644
+--- a/docs/system/device-emulation.rst
++++ b/docs/system/device-emulation.rst
+@@ -93,6 +93,7 @@ Emulated Devices
+    devices/ivshmem-flat.rst
+    devices/ivshmem.rst
+    devices/keyboard.rst
++   devices/mctp-i2c-sensor.rst
+    devices/net.rst
+    devices/nvme.rst
+    devices/scsi/index.rst
+diff --git a/docs/system/devices/mctp-i2c-sensor.rst b/docs/system/devices/mctp-i2c-sensor.rst
+new file mode 100644
+index 000000000..01a059f49
+--- /dev/null
++++ b/docs/system/devices/mctp-i2c-sensor.rst
+@@ -0,0 +1,234 @@
++MCTP over I2C temperature sensor
++===============================
++
++The ``mctp-i2c-sensor`` device is a fixed-address temperature sensor using
++the MCTP SMBus/I2C transport (DSP0237). It receives SMBus block writes with
++command code ``0x0f`` and a PEC, and sends replies as separate I2C writes
++to the requester's address. The controller must support I2C target mode;
++the Aspeed controller provides this support.
++
++The implementation follows the reverse-controller approach in the
++`MCTP I2C responder proposal
++<https://patchew.org/QEMU/20260408085941.3837334-1-zhangjian.3032%40bytedance.com/>`_.
++
++The ``ast2600-evb`` machine creates one sensor on QEMU I2C bus 4 at the
++7-bit address ``0x1d``. Its QOM path is ``/machine/mctp-sensor``, its
++initial temperature is 35000 milli-degrees Celsius (35 degrees Celsius),
++and its initial EID is zero. The bus owner assigns an EID using the MCTP
++Control protocol. SMBus ARP is not implemented and address ``0x61`` is not
++used by the device. The I2C address and the MCTP EID are independent.
++
++Supported commands
++------------------
++
++MCTP Control supports Set Endpoint ID (including Force, Reset, and Set
++Discovered Flag operations), Get Endpoint ID, Get Endpoint UUID, Get
++MCTP Version Support, and Get Message Type Support. The latter advertises
++MCTP Control (``0x00``) and PLDM (``0x01``). The device is a simple
++endpoint with a dynamic EID; it does not request an EID pool.
++
++The minimal PLDM responder supports the Base commands SetTID, GetTID,
++GetPLDMVersion, GetPLDMTypes, and GetPLDMCommands. The Platform type
++supports GetSensorReading (``0x11``) for sensor ID 1, GetPDRRepositoryInfo
++(``0x50``), and GetPDR (``0x51``). The reading is a
++signed 32-bit little-endian value in milli-degrees Celsius. Sensor state
++is always enabled and normal, and event generation is disabled.
++
++The PDR repository contains a Terminus Locator, a Numeric Sensor, a Sensor
++Auxiliary Names, and an Entity Auxiliary Names record. The numeric sensor
++uses degrees Celsius with unit modifier -3 and resolution 1.0, so the
++default raw reading of 35000 becomes 35 degrees Celsius. The locator
++tracks the assigned EID and PLDM TID. The entity is named
++``QEMU_MCTP_<7-bit-address>`` and the sensor is named ``Temperature``.
++
++Requests must fit in one MCTP packet, with at most 64 bytes of payload
++including the message-type byte. Fragmented messages, the integrity-check
++message-type bit, and sensor events are not implemented. GetPDR uses PLDM
++multipart transfers, with a final CRC-8, to keep each response within this
++packet limit. Continuation handles identify the record, offset, and
++repository generation; an EID or TID change invalidates old transfers.
++Unsupported commands return the appropriate completion code. Packets
++with invalid PEC, length, destination EID, or tag ownership are dropped.
++
++Guest configuration
++-------------------
++
++Enable these guest kernel options (built-in or as modules):
++
++.. code-block:: none
++
++   CONFIG_MCTP=y
++   CONFIG_I2C_ASPEED=y
++   CONFIG_I2C_SLAVE=y
++   CONFIG_MCTP_TRANSPORT_I2C=y
++
++In the guest's device tree, enable the local BMC MCTP endpoint on bus 4.
++The address below is the BMC's own I2C address, not the sensor's address:
++
++.. code-block:: dts
++
++   #include <dt-bindings/i2c/i2c.h>
++
++   &i2c4 {
++       status = "okay";
++       multi-master;
++       mctp-controller;
++
++       mctp@10 {
++           compatible = "mctp-i2c-controller";
++           reg = <(0x10 | I2C_OWN_SLAVE_ADDRESS)>;
++       };
++   };
++
++Rebuild and boot the guest DTB, then check the interface name with
++``mctp link``. The following commands assume that the adapter is numbered
++4, producing interface ``mctpi2c4``. Use the actual interface name if
++the guest numbers adapters differently.
++
++If QEMU boots U-Boot from a flash image, U-Boot obtains the device tree
++from the FIT image in flash. Rebuild the kernel FIT and flash image to
++use the updated DTS. For a quick check, keep the MTD drive in the QEMU
++command and boot the kernel, corrected DTB, and OpenBMC initramfs directly:
++
++.. code-block:: bash
++
++   -kernel /path/to/linux.bin \
++   -dtb /path/to/aspeed-ast2600-evb-mctp.dtb \
++   -initrd /path/to/obmc-phosphor-initramfs-evb-ast2600.cpio.xz
++
++If ``busctl tree au.com.codeconstruct.MCTP1`` only contains ``interfaces/lo``
++and ``mctp link`` does not list ``mctpi2c4``, the local transport has not
++been created. Seeing ``0x1d`` with ``i2cdetect`` only verifies the remote
++I2C device is present. Ensure the running device tree contains both
++``mctp-controller`` on bus 4 and the ``mctp@10`` local endpoint above.
++Restarting ``mctpd`` alone cannot create a missing kernel interface.
++
++On a device-tree-described adapter, creating an
++``mctp-i2c-interface`` client via ``new_device`` is insufficient if the
++adapter lacks ``mctp-controller``: the driver registers its I2C receiver
++but does not create the MCTP network device. Use the corrected DTB.
++
++With CodeConstruct's ``mctp`` tools installed in the guest, bring up the
++interface and assign the BMC a local EID. Omit the address command if
++EID 8 is already configured:
++
++.. code-block:: bash
++
++   mctp addr add 8 dev mctpi2c4
++   mctp link set mctpi2c4 up
++   systemctl restart mctpd
++
++Configure ``role = "bus-owner"`` in ``/etc/mctpd.conf``. To enumerate the
++known physical address and assign an EID, call:
++
++.. code-block:: bash
++
++   busctl call au.com.codeconstruct.MCTP1 \
++       /au/com/codeconstruct/mctp1/interfaces/mctpi2c4 \
++       au.com.codeconstruct.MCTP.BusOwner1 SetupEndpoint ay 1 0x1d
++
++``ay 1 0x1d`` is an array containing one byte: the sensor's 7-bit I2C
++address. It is not the shifted on-wire address ``0x3a``. Since there is
++no ARP support, supply this physical address to ``mctpd`` or to the
++platform's endpoint configuration.
++
++On a network with only local EID 8, the default dynamic allocation range
++typically results in:
++
++.. code-block:: none
++
++   yisb 9 1 "/au/com/codeconstruct/mctp1/networks/1/endpoints/9" true
++
++Use the returned EID, network, and object path rather than assuming 9
++is available. The daemon creates the route and neighbour entry. Inspect
++the registered endpoint with:
++
++.. code-block:: bash
++
++   busctl introspect au.com.codeconstruct.MCTP1 \
++       /au/com/codeconstruct/mctp1/networks/1/endpoints/9
++   mctp route
++   mctp neigh
++
++Read temperature using ``mctp-client`` (available in CodeConstruct mctp
++2.5). The MCTP type is specified separately; the data starts with the
++three-byte PLDM header:
++
++.. code-block:: bash
++
++   mctp-client net 1 eid 9 type pldm data 80 02 11 01 00 00
++
++The default reply is:
++
++.. code-block:: none
++
++   00 02 11 00 05 00 00 01 01 01 B8 88 00 00
++
++The final four bytes encode 35000 (35 degrees Celsius). The preceding
++fields are the PLDM response header, completion code, sensor data size,
++operational state, event enable, present state, previous state, and
++event state.
++
++OpenBMC PLDM sensor discovery
++----------------------------
++
++With OpenBMC's ``pldmd`` installed and running, the daemon discovers the
++MCTP endpoint, retrieves its PDRs, and creates an inventory object and a
++temperature sensor. For the board's device at ``0x1d``, inspect them with:
++
++.. code-block:: bash
++
++   busctl tree xyz.openbmc_project.PLDM
++   busctl get-property xyz.openbmc_project.PLDM \
++       /xyz/openbmc_project/sensors/temperature/QEMU_MCTP_1d_Temperature \
++       xyz.openbmc_project.Sensor.Value Value
++
++The default value is ``d 35``. Changing the QOM ``temperature`` property
++updates the D-Bus value through ``pldmd``'s sensor polling. The raw PLDM
++reading remains in milli-degrees Celsius; D-Bus reports degrees Celsius.
++For example, a raw value of -12500 is published as -12.5 degrees Celsius.
++Restart ``pldmd`` to repeat discovery if it was started against an older
++QEMU model without PDR support. Event setup and firmware-update discovery
++may log unsupported-operation messages; this sensor uses polling and does
++not implement firmware update.
++
++QOM properties
++--------------
++
++``temperature`` is runtime writable, in milli-degrees Celsius. ``eid``
++is runtime readable and reports the current assigned EID. For the
++board's default sensor, these QMP commands inspect or change them:
++
++.. code-block:: json
++
++   {"execute":"qom-get","arguments":{"path":"/machine/mctp-sensor","property":"eid"}}
++   {"execute":"qom-set","arguments":{"path":"/machine/mctp-sensor","property":"temperature","value":42000}}
++
++Additional devices can be attached at different fixed I2C addresses:
++
++.. code-block:: bash
++
++   -device mctp-i2c-sensor,bus=aspeed.i2c.bus.4,address=0x1e,id=temp1,\
++   uuid=8af8149a-76ee-4aa1-b042-19a609ff1d01
++
++Such a device has QOM path ``/machine/peripheral/temp1``. The optional
++``initial-eid`` property defaults to zero; leave it zero to exercise EID
++assignment. ``uuid`` may be supplied for a persistent identity; otherwise
++a UUID is generated once when the device is realized. The default board
++sensor has a fixed UUID.
++
++Reset clears the assigned EID to ``initial-eid`` and restores TID 1.
++Temperature and UUID are retained. Migration preserves these values
++when the device is idle; it is rejected while an I2C request or reply
++is in progress.
++
++Testing
++-------
++
++Build and run the wire-level tests:
++
++.. code-block:: bash
++
++   ninja -C build qemu-system-arm tests/qtest/mctp-i2c-sensor-test
++   QTEST_QEMU_BINARY=./build/qemu-system-arm \
++       ./build/tests/qtest/mctp-i2c-sensor-test
+diff --git a/hw/arm/Kconfig b/hw/arm/Kconfig
+index e3b7844d8..0704c577a 100644
+--- a/hw/arm/Kconfig
++++ b/hw/arm/Kconfig
+@@ -558,6 +558,7 @@ config ASPEED_SOC
+     select PCI_EXPRESS_ASPEED
+     select C8763
+     select LTC2497
++    select MCTP_I2C_SENSOR
+ 
+ config MPS2
+     bool
+diff --git a/hw/arm/aspeed_ast2600_evb.c b/hw/arm/aspeed_ast2600_evb.c
+index 4a548fa73..db67d20b2 100644
+--- a/hw/arm/aspeed_ast2600_evb.c
++++ b/hw/arm/aspeed_ast2600_evb.c
+@@ -14,6 +14,7 @@
+ #include "hw/i2c/smbus_eeprom.h"
+ #include "hw/sensor/c8763.h"
+ #include "hw/sensor/ltc2497.h"
++#include "hw/sensor/mctp-i2c-sensor.h"
+ #include "hw/sensor/tmp105.h"
+ #include "hw/nvram/eeprom_at24c.h"
+ 
+@@ -66,6 +67,15 @@ static void ast2600_evb_i2c_init(AspeedMachineState *bmc)
+ {
+     AspeedSoCState *soc = bmc->soc;
+ 
++    /* Fixed I2C address; mctpd assigns the initially unassigned MCTP EID. */
++    I2CSlave *mctp = i2c_slave_new(TYPE_MCTP_I2C_SENSOR, 0x1d);
++    object_property_add_child(OBJECT(bmc), "mctp-sensor", OBJECT(mctp));
++    object_property_set_str(OBJECT(mctp), "uuid",
++                            "8af8149a-76ee-4aa1-b042-19a609ff1d00",
++                            &error_abort);
++    i2c_slave_realize_and_unref(mctp, aspeed_i2c_get_bus(&soc->i2c, 4),
++                                &error_abort);
++
+     uint8_t *eeprom_buf = g_malloc0(256);
+     memcpy(eeprom_buf, ted_bmc_fruid, ted_bmc_fruid_len);
+     smbus_eeprom_init_one(aspeed_i2c_get_bus(&soc->i2c, 6), 0x50,
+diff --git a/hw/sensor/Kconfig b/hw/sensor/Kconfig
+index 8498aa639..0f6ca7b36 100644
+--- a/hw/sensor/Kconfig
++++ b/hw/sensor/Kconfig
+@@ -51,3 +51,7 @@ config C8763
+ config LTC2497
+     bool
+     depends on I2C
++
++config MCTP_I2C_SENSOR
++    bool
++    depends on I2C
+diff --git a/hw/sensor/mctp-i2c-sensor.c b/hw/sensor/mctp-i2c-sensor.c
+new file mode 100644
+index 000000000..fa2d15438
+--- /dev/null
++++ b/hw/sensor/mctp-i2c-sensor.c
+@@ -0,0 +1,865 @@
++/*
++ * Fixed-address MCTP-over-SMBus/I2C temperature sensor.
++ *
++ * SPDX-License-Identifier: GPL-2.0-or-later
++ *
++ * Uses the reverse-controller transfer approach from Jian Zhang's
++ * mctp-i2c-responder proposal and QEMU's i2c-echo example. SMBus ARP is
++ * deliberately absent: the bus owner must know the 7-bit I2C address.
++ */
++
++#include "qemu/osdep.h"
++#include "qapi/error.h"
++#include "qapi/visitor.h"
++#include "qemu/bswap.h"
++#include "qemu/main-loop.h"
++#include "qemu/module.h"
++#include "qemu/uuid.h"
++#include "hw/core/qdev-properties.h"
++#include "hw/core/qdev-properties-system.h"
++#include "hw/i2c/i2c.h"
++#include "hw/sensor/mctp-i2c-sensor.h"
++#include "migration/vmstate.h"
++
++/* DSP0237: address, command, count, source, MCTP header, payload, PEC. */
++#define MCTP_I2C_COMMAND             0x0f
++#define MCTP_PAYLOAD_MAX             64
++#define MCTP_PACKET_MAX              (8 + MCTP_PAYLOAD_MAX + 1)
++#define MCTP_TX_QUEUE_MAX            16
++#define MCTP_SOM                     0x80
++#define MCTP_EOM                     0x40
++#define MCTP_TAG_OWNER               0x08
++#define MCTP_TAG_MASK                0x07
++#define MCTP_TYPE_CONTROL            0x00
++#define MCTP_TYPE_PLDM               0x01
++#define REQUEST                     0x80
++#define DATAGRAM                    0x40
++#define INSTANCE_ID_MASK            0x1f
++
++#define MCTP_SET_EID                 0x01
++#define MCTP_GET_EID                 0x02
++#define MCTP_GET_UUID                0x03
++#define MCTP_GET_VERSION             0x04
++#define MCTP_GET_TYPES               0x05
++#define MCTP_CC_INVALID_DATA         0x02
++#define MCTP_CC_INVALID_LENGTH       0x03
++#define MCTP_CC_UNSUPPORTED          0x05
++#define MCTP_CC_UNSUPPORTED_TYPE     0x80
++#define MCTP_EID_REJECTED            0x10
++
++#define PLDM_TYPE_BASE               0x00
++#define PLDM_TYPE_PLATFORM           0x02
++#define PLDM_SET_TID                 0x01
++#define PLDM_GET_TID                 0x02
++#define PLDM_GET_VERSION             0x03
++#define PLDM_GET_TYPES               0x04
++#define PLDM_GET_COMMANDS            0x05
++#define PLDM_GET_SENSOR_READING      0x11
++#define PLDM_GET_PDR_REPOSITORY_INFO  0x50
++#define PLDM_GET_PDR                 0x51
++#define PLDM_CC_INVALID_DATA         0x02
++#define PLDM_CC_INVALID_LENGTH       0x03
++#define PLDM_CC_UNSUPPORTED          0x05
++#define PLDM_CC_INVALID_TYPE         0x20
++#define PLDM_CC_INVALID_VERSION      0x84
++#define PLDM_CC_INVALID_SENSOR_ID    0x80
++#define PLDM_CC_INVALID_TRANSFER     0x80
++#define PLDM_CC_INVALID_TRANSFER_OP  0x81
++#define PLDM_CC_INVALID_RECORD       0x82
++#define PLDM_CC_INVALID_RECORD_CHANGE 0x83
++#define PLDM_SENSOR_ID               1
++#define PLDM_TERMINUS_HANDLE         1
++#define PLDM_ENTITY_SYSTEM_BOARD     64
++#define PLDM_PDR_TERMINUS_LOCATOR    1
++#define PLDM_PDR_NUMERIC_SENSOR      2
++#define PLDM_PDR_SENSOR_NAMES        6
++#define PLDM_PDR_ENTITY_NAMES        16
++#define PLDM_PDR_COUNT               4
++#define PLDM_PDR_HEADER_SIZE         10
++#define PLDM_PDR_MAX_SIZE            78
++#define PLDM_GET_PDR_HEADER_SIZE     16
++/* Reserve one byte for the CRC on the last part of a multipart transfer. */
++#define PLDM_PDR_CHUNK_MAX           (MCTP_PAYLOAD_MAX - \
++                                     PLDM_GET_PDR_HEADER_SIZE - 1)
++#define PLDM_GET_NEXT_PART           0
++#define PLDM_GET_FIRST_PART          1
++#define PLDM_TRANSFER_START          0
++#define PLDM_TRANSFER_MIDDLE         1
++#define PLDM_TRANSFER_END            4
++#define PLDM_TRANSFER_START_AND_END  5
++
++OBJECT_DECLARE_SIMPLE_TYPE(MCTPI2CSensorState, MCTP_I2C_SENSOR)
++
++typedef struct MCTPSensorPacket {
++    uint8_t data[MCTP_PACKET_MAX];
++    unsigned int len;
++    unsigned int pos;
++} MCTPSensorPacket;
++
++struct MCTPI2CSensorState {
++    I2CSlave parent_obj;
++
++    uint8_t initial_eid;
++    uint8_t eid;
++    uint8_t tid;
++    uint16_t pdr_change_num;
++    QemuUUID uuid;
++    int32_t temperature; /* milli-degrees Celsius */
++
++    I2CBus *bus;
++    QEMUBH *tx_bh;
++    GQueue tx_queue;
++    bool tx_pending;
++    uint8_t rx[MCTP_PACKET_MAX];
++    unsigned int rx_len;
++    bool rx_overflow;
++};
++
++static uint8_t mctp_sensor_pec(const uint8_t *buf, size_t len)
++{
++    uint8_t crc = 0;
++
++    for (size_t i = 0; i < len; i++) {
++        crc ^= buf[i];
++        for (unsigned int bit = 0; bit < 8; bit++) {
++            crc = (crc << 1) ^ ((crc & 0x80) ? 0x07 : 0);
++        }
++    }
++    return crc;
++}
++
++static bool mctp_sensor_valid_eid(uint8_t eid)
++{
++    return eid >= 8 && eid < 0xff;
++}
++
++static void pldm_sensor_pdr_changed(MCTPI2CSensorState *s)
++{
++    s->pdr_change_num = s->pdr_change_num == UINT16_MAX ?
++                        1 : s->pdr_change_num + 1;
++}
++
++/* Payloads include the MCTP message-type byte. */
++static size_t mctp_sensor_control(MCTPI2CSensorState *s,
++                                  const uint8_t *req, size_t len, uint8_t *rsp)
++{
++    size_t expected;
++    uint8_t old_eid = s->eid;
++
++    if (len < 3 || !(req[1] & REQUEST) || (req[1] & DATAGRAM)) {
++        return 0;
++    }
++
++    rsp[0] = MCTP_TYPE_CONTROL;
++    rsp[1] = req[1] & INSTANCE_ID_MASK;
++    rsp[2] = req[2];
++    rsp[3] = 0;
++
++    switch (req[2]) {
++    case MCTP_SET_EID:
++        expected = 5;
++        break;
++    case MCTP_GET_VERSION:
++        expected = 4;
++        break;
++    case MCTP_GET_EID:
++    case MCTP_GET_UUID:
++    case MCTP_GET_TYPES:
++        expected = 3;
++        break;
++    default:
++        rsp[3] = MCTP_CC_UNSUPPORTED;
++        return 4;
++    }
++    if (len != expected) {
++        rsp[3] = MCTP_CC_INVALID_LENGTH;
++        return 4;
++    }
++
++    switch (req[2]) {
++    case MCTP_SET_EID:
++        if (req[3] > 3 ||
++            ((req[3] == 0 || req[3] == 1) &&
++             !mctp_sensor_valid_eid(req[4]))) {
++            rsp[3] = MCTP_CC_INVALID_DATA;
++            return 4;
++        }
++        rsp[4] = 0; /* Assignment accepted; no EID pool requested. */
++        switch (req[3]) {
++        case 0: /* Set EID: keep an EID already assigned by a bus owner. */
++            if (s->eid && s->eid != req[4]) {
++                rsp[4] = MCTP_EID_REJECTED;
++                break;
++            }
++            s->eid = req[4];
++            break;
++        case 1: /* Force EID */
++            s->eid = req[4];
++            break;
++        case 2: /* Reset EID */
++            s->eid = s->initial_eid;
++            break;
++        case 3: /* Set Discovered Flag: no EID change on this endpoint. */
++            break;
++        }
++        if (s->eid != old_eid) {
++            pldm_sensor_pdr_changed(s);
++        }
++        rsp[5] = s->eid;
++        rsp[6] = 0;
++        return 7;
++
++    case MCTP_GET_EID:
++        rsp[4] = s->eid;
++        rsp[5] = 0; /* Simple endpoint, dynamic EID, no static EID. */
++        rsp[6] = 0; /* No medium-specific information. */
++        return 7;
++
++    case MCTP_GET_UUID:
++        memcpy(rsp + 4, s->uuid.data, sizeof(s->uuid.data));
++        return 4 + sizeof(s->uuid.data);
++
++    case MCTP_GET_VERSION:
++        if (req[3] != 0xff && req[3] != MCTP_TYPE_CONTROL &&
++            req[3] != MCTP_TYPE_PLDM) {
++            rsp[3] = MCTP_CC_UNSUPPORTED_TYPE;
++            return 4;
++        }
++        rsp[4] = 1; /* One complete four-byte version entry, in BCD. */
++        rsp[5] = 0xf1;
++        rsp[6] = req[3] == MCTP_TYPE_PLDM ? 0xf0 : 0xf3;
++        rsp[7] = 0xf0;
++        rsp[8] = 0;
++        return 9;
++
++    case MCTP_GET_TYPES:
++        rsp[4] = 2;
++        rsp[5] = MCTP_TYPE_CONTROL;
++        rsp[6] = MCTP_TYPE_PLDM;
++        return 7;
++    }
++    g_assert_not_reached();
++}
++
++static bool pldm_sensor_valid_type(uint8_t type)
++{
++    return type == PLDM_TYPE_BASE || type == PLDM_TYPE_PLATFORM;
++}
++
++static uint32_t pldm_sensor_version_crc(const uint8_t *buf, size_t len)
++{
++    uint32_t crc = UINT32_MAX;
++
++    for (size_t i = 0; i < len; i++) {
++        crc ^= buf[i];
++        for (unsigned int bit = 0; bit < 8; bit++) {
++            crc = (crc >> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
++        }
++    }
++    return ~crc;
++}
++
++/* All names in this virtual device are ASCII, encoded as PLDM UTF-16BE. */
++static size_t pldm_sensor_pdr_name(uint8_t *data, const char *name)
++{
++    size_t len = strlen(name);
++
++    for (size_t i = 0; i <= len; i++) {
++        stw_be_p(data + 2 * i, (uint8_t)name[i]);
++    }
++    return 2 * (len + 1);
++}
++
++static size_t pldm_sensor_pdr(MCTPI2CSensorState *s, uint32_t handle,
++                            uint8_t *pdr)
++{
++    size_t len;
++    char name[sizeof("QEMU_MCTP_00")];
++
++    memset(pdr, 0, PLDM_PDR_MAX_SIZE);
++    switch (handle) {
++    case 1:
++        len = 19;
++        pdr[5] = PLDM_PDR_TERMINUS_LOCATOR;
++        stw_le_p(pdr + 10, PLDM_TERMINUS_HANDLE);
++        pdr[12] = s->eid != 0; /* Locator validity */
++        pdr[13] = s->tid;
++        pdr[16] = 1; /* MCTP_EID locator type */
++        pdr[17] = 1; /* Locator value size */
++        pdr[18] = s->eid;
++        break;
++    case 2:
++        len = PLDM_PDR_MAX_SIZE;
++        pdr[5] = PLDM_PDR_NUMERIC_SENSOR;
++        stw_le_p(pdr + 10, PLDM_TERMINUS_HANDLE);
++        stw_le_p(pdr + 12, PLDM_SENSOR_ID);
++        stw_le_p(pdr + 14, PLDM_ENTITY_SYSTEM_BOARD);
++        stw_le_p(pdr + 16, 1); /* Entity instance */
++        /* sensorInit = noInit; the sensor is always enabled. */
++        pdr[21] = 1; /* Sensor Auxiliary Names PDR present */
++        pdr[22] = 2; /* Degrees Celsius */
++        pdr[23] = (uint8_t)-3; /* Raw readings are milli-degrees Celsius. */
++        pdr[31] = 1; /* Linear reading conversion */
++        pdr[32] = 5; /* sint32 sensorDataSize */
++        stl_le_p(pdr + 33, 0x3f800000); /* resolution = 1.0 */
++        stl_le_p(pdr + 55, 0x3f800000); /* updateInterval = 1.0 second */
++        stl_le_p(pdr + 59, 128000); /* maxReadable */
++        stl_le_p(pdr + 63, (uint32_t)-127000); /* minReadable */
++        /* No thresholds/ranges; rangeFieldFormat = uint8, values = zero. */
++        break;
++    case 3:
++        pdr[5] = PLDM_PDR_SENSOR_NAMES;
++        stw_le_p(pdr + 10, PLDM_TERMINUS_HANDLE);
++        stw_le_p(pdr + 12, PLDM_SENSOR_ID);
++        pdr[14] = 1; /* Sensor count */
++        pdr[15] = 1; /* Name string count */
++        memcpy(pdr + 16, "en", 3);
++        len = 19 + pldm_sensor_pdr_name(pdr + 19, "Temperature");
++        break;
++    case 4:
++        pdr[5] = PLDM_PDR_ENTITY_NAMES;
++        stw_le_p(pdr + 10, PLDM_ENTITY_SYSTEM_BOARD);
++        stw_le_p(pdr + 12, 1); /* Entity instance; system container is zero. */
++        pdr[17] = 1; /* Name string count */
++        memcpy(pdr + 18, "en", 3);
++        snprintf(name, sizeof(name), "QEMU_MCTP_%02x", s->parent_obj.address);
++        len = 21 + pldm_sensor_pdr_name(pdr + 21, name);
++        break;
++    default:
++        return 0;
++    }
++
++    stl_le_p(pdr, handle);
++    pdr[4] = 1; /* PDR header version */
++    stw_le_p(pdr + 6, s->pdr_change_num);
++    stw_le_p(pdr + 8, len - PLDM_PDR_HEADER_SIZE);
++    return len;
++}
++
++static uint32_t pldm_sensor_transfer_handle(MCTPI2CSensorState *s,
++                                          uint32_t record, size_t offset)
++{
++    /* Bind a continuation to this record and repository generation. */
++    return (record << 24) | ((uint32_t)s->pdr_change_num << 8) | offset;
++}
++
++static size_t pldm_sensor_get_pdr(MCTPI2CSensorState *s, const uint8_t *req,
++                                uint8_t *rsp)
++{
++    uint32_t record = ldl_le_p(req + 4);
++    uint32_t transfer = ldl_le_p(req + 8);
++    uint8_t op = req[12];
++    uint16_t count = lduw_le_p(req + 13);
++    uint16_t change = lduw_le_p(req + 15);
++    uint8_t pdr[PLDM_PDR_MAX_SIZE];
++    size_t offset = 0, len;
++    bool last;
++
++    /* Record handle zero identifies the first record, also on continuations. */
++    if (!record) {
++        record = 1;
++    }
++    len = pldm_sensor_pdr(s, record, pdr);
++    if (!len) {
++        rsp[4] = PLDM_CC_INVALID_RECORD;
++        return 5;
++    }
++    if (op != PLDM_GET_FIRST_PART && op != PLDM_GET_NEXT_PART) {
++        rsp[4] = PLDM_CC_INVALID_TRANSFER_OP;
++        return 5;
++    }
++    if ((op == PLDM_GET_FIRST_PART && change != 0) ||
++        (op == PLDM_GET_NEXT_PART && change != s->pdr_change_num)) {
++        rsp[4] = PLDM_CC_INVALID_RECORD_CHANGE;
++        return 5;
++    }
++    if (op == PLDM_GET_FIRST_PART) {
++        if (transfer) {
++            rsp[4] = PLDM_CC_INVALID_TRANSFER;
++            return 5;
++        }
++    } else {
++        offset = transfer & 0xff;
++        if (!offset || offset >= len ||
++            transfer != pldm_sensor_transfer_handle(s, record, offset)) {
++            rsp[4] = PLDM_CC_INVALID_TRANSFER;
++            return 5;
++        }
++    }
++
++    count = MIN(count, MIN(len - offset, PLDM_PDR_CHUNK_MAX));
++    /* A zero requestCount is a metadata-only probe, with no continuation. */
++    last = !count || offset + count == len;
++    stl_le_p(rsp + 5, record == PLDM_PDR_COUNT ? 0 : record + 1);
++    stl_le_p(rsp + 9, last ? 0 :
++             pldm_sensor_transfer_handle(s, record, offset + count));
++    rsp[13] = op == PLDM_GET_FIRST_PART ?
++              (last ? PLDM_TRANSFER_START_AND_END : PLDM_TRANSFER_START) :
++              (last ? PLDM_TRANSFER_END : PLDM_TRANSFER_MIDDLE);
++    stw_le_p(rsp + 14, count);
++    memcpy(rsp + PLDM_GET_PDR_HEADER_SIZE, pdr + offset, count);
++    len = PLDM_GET_PDR_HEADER_SIZE + count;
++    if (rsp[13] == PLDM_TRANSFER_END) {
++        rsp[len++] = mctp_sensor_pec(pdr, lduw_le_p(pdr + 8) +
++                                    PLDM_PDR_HEADER_SIZE);
++    }
++    return len;
++}
++
++static size_t pldm_sensor_platform(MCTPI2CSensorState *s, const uint8_t *req,
++                                 size_t len, uint8_t *rsp)
++{
++    size_t expected;
++
++    switch (req[3]) {
++    case PLDM_GET_SENSOR_READING:
++        expected = 7;
++        break;
++    case PLDM_GET_PDR_REPOSITORY_INFO:
++        expected = 4;
++        break;
++    case PLDM_GET_PDR:
++        expected = 17;
++        break;
++    default:
++        rsp[4] = PLDM_CC_UNSUPPORTED;
++        return 5;
++    }
++    if (len != expected) {
++        rsp[4] = PLDM_CC_INVALID_LENGTH;
++        return 5;
++    }
++
++    switch (req[3]) {
++    case PLDM_GET_PDR_REPOSITORY_INFO: {
++        uint8_t pdr[PLDM_PDR_MAX_SIZE];
++        uint32_t size = 0, largest = 0;
++
++        for (uint32_t handle = 1; handle <= PLDM_PDR_COUNT; handle++) {
++            size_t pdr_len = pldm_sensor_pdr(s, handle, pdr);
++            size += pdr_len;
++            largest = MAX(largest, pdr_len);
++        }
++        /* Available repository; unspecified timestamps; no transfer timeout. */
++        memset(rsp + 5, 0, 40);
++        stl_le_p(rsp + 32, PLDM_PDR_COUNT);
++        stl_le_p(rsp + 36, size);
++        stl_le_p(rsp + 40, largest);
++        return 45;
++    }
++    case PLDM_GET_PDR:
++        return pldm_sensor_get_pdr(s, req, rsp);
++    case PLDM_GET_SENSOR_READING:
++        if (lduw_le_p(req + 4) != PLDM_SENSOR_ID) {
++            rsp[4] = PLDM_CC_INVALID_SENSOR_ID;
++            return 5;
++        }
++        if (req[6] > 1) {
++            rsp[4] = PLDM_CC_INVALID_DATA;
++            return 5;
++        }
++        rsp[5] = 5; /* sensorDataSize: sint32. */
++        rsp[6] = 0; /* sensorOperationalState: enabled. */
++        rsp[7] = 0; /* sensorEventMessageEnable: no event generation. */
++        rsp[8] = 1; /* presentState: normal. */
++        rsp[9] = 1; /* previousState: normal. */
++        rsp[10] = 1; /* eventState: normal. */
++        stl_le_p(rsp + 11, s->temperature);
++        return 15;
++    }
++    g_assert_not_reached();
++}
++
++static size_t mctp_sensor_pldm(MCTPI2CSensorState *s,
++                               const uint8_t *req, size_t len, uint8_t *rsp)
++{
++    /* DSP0240 version fields are little endian: alpha, update, minor, major. */
++    static const uint8_t version[] = { 0x00, 0xf0, 0xf0, 0xf1 };
++    size_t expected;
++
++    if (len < 4 || !(req[1] & REQUEST) || (req[1] & DATAGRAM) ||
++        (req[2] & 0xc0)) {
++        return 0;
++    }
++    rsp[0] = MCTP_TYPE_PLDM;
++    rsp[1] = req[1] & INSTANCE_ID_MASK;
++    rsp[2] = req[2];
++    rsp[3] = req[3];
++    rsp[4] = 0;
++
++    if (!pldm_sensor_valid_type(req[2])) {
++        rsp[4] = PLDM_CC_INVALID_TYPE;
++        return 5;
++    }
++
++    if (req[2] == PLDM_TYPE_PLATFORM) {
++        return pldm_sensor_platform(s, req, len, rsp);
++    }
++
++    switch (req[3]) {
++    case PLDM_SET_TID:
++        expected = 5;
++        break;
++    case PLDM_GET_TID:
++    case PLDM_GET_TYPES:
++        expected = 4;
++        break;
++    case PLDM_GET_VERSION:
++        expected = 10;
++        break;
++    case PLDM_GET_COMMANDS:
++        expected = 9;
++        break;
++    default:
++        rsp[4] = PLDM_CC_UNSUPPORTED;
++        return 5;
++    }
++    if (len != expected) {
++        rsp[4] = PLDM_CC_INVALID_LENGTH;
++        return 5;
++    }
++
++    switch (req[3]) {
++    case PLDM_SET_TID:
++        if (req[4] == 0 || req[4] == 0xff) {
++            rsp[4] = PLDM_CC_INVALID_DATA;
++        } else if (s->tid != req[4]) {
++            s->tid = req[4];
++            pldm_sensor_pdr_changed(s);
++        }
++        return 5;
++
++    case PLDM_GET_TID:
++        rsp[5] = s->tid;
++        return 6;
++
++    case PLDM_GET_TYPES:
++        memset(rsp + 5, 0, 8);
++        rsp[5] = BIT(PLDM_TYPE_BASE) | BIT(PLDM_TYPE_PLATFORM);
++        return 13;
++
++    case PLDM_GET_VERSION:
++        if (!pldm_sensor_valid_type(req[9])) {
++            rsp[4] = 0x83; /* Invalid PLDM type in request data. */
++            return 5;
++        }
++        if (ldl_le_p(req + 4) != 0) {
++            rsp[4] = 0x80; /* Invalid data transfer handle. */
++            return 5;
++        }
++        if (req[8] != 1) {
++            rsp[4] = 0x81; /* Invalid transfer operation flag. */
++            return 5;
++        }
++        stl_le_p(rsp + 5, 0); /* nextDataTransferHandle */
++        rsp[9] = 5; /* transferFlag: StartAndEnd. */
++        memcpy(rsp + 10, version, sizeof(version));
++        stl_le_p(rsp + 14, pldm_sensor_version_crc(version, sizeof(version)));
++        return 18;
++
++    case PLDM_GET_COMMANDS:
++        if (!pldm_sensor_valid_type(req[4])) {
++            rsp[4] = 0x83;
++            return 5;
++        }
++        if (memcmp(req + 5, version, sizeof(version))) {
++            rsp[4] = PLDM_CC_INVALID_VERSION;
++            return 5;
++        }
++        memset(rsp + 5, 0, 32);
++        if (req[4] == PLDM_TYPE_BASE) {
++            rsp[5] = BIT(PLDM_SET_TID) | BIT(PLDM_GET_TID) |
++                     BIT(PLDM_GET_VERSION) | BIT(PLDM_GET_TYPES) |
++                     BIT(PLDM_GET_COMMANDS);
++        } else {
++            rsp[5 + PLDM_GET_SENSOR_READING / 8] =
++                BIT(PLDM_GET_SENSOR_READING % 8);
++            rsp[5 + PLDM_GET_PDR_REPOSITORY_INFO / 8] |=
++                BIT(PLDM_GET_PDR_REPOSITORY_INFO % 8);
++            rsp[5 + PLDM_GET_PDR / 8] |= BIT(PLDM_GET_PDR % 8);
++        }
++        return 37;
++    }
++    g_assert_not_reached();
++}
++
++static void mctp_sensor_schedule_tx(MCTPI2CSensorState *s)
++{
++    if (!s->tx_pending && !g_queue_is_empty(&s->tx_queue)) {
++        s->tx_pending = true;
++        i2c_bus_master(s->bus, s->tx_bh);
++        i2c_schedule_pending_master(s->bus);
++    }
++}
++
++static void mctp_sensor_tx(void *opaque)
++{
++    MCTPI2CSensorState *s = opaque;
++    MCTPSensorPacket *pkt = g_queue_peek_head(&s->tx_queue);
++
++    assert(pkt && s->bus->bh == s->tx_bh);
++    if (pkt->pos == 0) {
++        pkt->pos++;
++        if (!i2c_start_send_async(s->bus, pkt->data[0] >> 1)) {
++            return; /* Resume after the receiving controller acknowledges. */
++        }
++    } else if (pkt->pos < pkt->len) {
++        if (!i2c_send_async(s->bus, pkt->data[pkt->pos++])) {
++            return;
++        }
++    }
++
++    g_free(g_queue_pop_head(&s->tx_queue));
++    i2c_end_transfer(s->bus);
++    i2c_bus_release(s->bus);
++    s->tx_pending = false;
++    mctp_sensor_schedule_tx(s);
++}
++
++static void mctp_sensor_receive(MCTPI2CSensorState *s)
++{
++    const uint8_t *rx = s->rx;
++    uint8_t payload[MCTP_PAYLOAD_MAX];
++    size_t len;
++    MCTPSensorPacket *pkt;
++
++    if (s->rx_overflow || s->rx_len < 10 || rx[1] != MCTP_I2C_COMMAND ||
++        rx[2] < 6 || rx[2] + 4 != s->rx_len || !(rx[3] & 1) ||
++        mctp_sensor_pec(rx, s->rx_len - 1) != rx[s->rx_len - 1] ||
++        rx[4] != 1 || (rx[5] != 0 && rx[5] != s->eid) ||
++        (rx[7] & (MCTP_SOM | MCTP_EOM | MCTP_TAG_OWNER)) !=
++        (MCTP_SOM | MCTP_EOM | MCTP_TAG_OWNER) ||
++        g_queue_get_length(&s->tx_queue) >= MCTP_TX_QUEUE_MAX) {
++        return;
++    }
++
++    /* Only complete single-packet requests (up to 64 payload bytes). */
++    switch (rx[8]) {
++    case MCTP_TYPE_CONTROL:
++        len = mctp_sensor_control(s, rx + 8, s->rx_len - 9, payload);
++        break;
++    case MCTP_TYPE_PLDM:
++        len = mctp_sensor_pldm(s, rx + 8, s->rx_len - 9, payload);
++        break;
++    default:
++        return;
++    }
++    if (!len) {
++        return;
++    }
++
++    pkt = g_new0(MCTPSensorPacket, 1);
++    pkt->data[0] = rx[3] & 0xfe; /* Requester's I2C address, write direction. */
++    pkt->data[1] = MCTP_I2C_COMMAND;
++    pkt->data[2] = 5 + len;
++    pkt->data[3] = (s->parent_obj.address << 1) | 1;
++    pkt->data[4] = 1;
++    pkt->data[5] = rx[6]; /* Destination EID is the requester's source EID. */
++    /* Use the assigned EID, including for the Set EID response. */
++    pkt->data[6] = s->eid;
++    pkt->data[7] = MCTP_SOM | MCTP_EOM | (rx[7] & MCTP_TAG_MASK);
++    memcpy(pkt->data + 8, payload, len);
++    pkt->len = 8 + len;
++    pkt->data[pkt->len] = mctp_sensor_pec(pkt->data, pkt->len);
++    pkt->len++;
++    g_queue_push_tail(&s->tx_queue, pkt);
++    mctp_sensor_schedule_tx(s);
++}
++
++static int mctp_sensor_event(I2CSlave *i2c, enum i2c_event event)
++{
++    MCTPI2CSensorState *s = MCTP_I2C_SENSOR(i2c);
++
++    switch (event) {
++    case I2C_START_SEND:
++        s->rx[0] = i2c->address << 1;
++        s->rx_len = 1;
++        s->rx_overflow = false;
++        return 0;
++    case I2C_FINISH:
++        mctp_sensor_receive(s);
++        s->rx_len = 0;
++        return 0;
++    default:
++        /* DSP0237 replies use a separate write, rather than an I2C read. */
++        s->rx_len = 0;
++        return -1;
++    }
++}
++
++static int mctp_sensor_send(I2CSlave *i2c, uint8_t data)
++{
++    MCTPI2CSensorState *s = MCTP_I2C_SENSOR(i2c);
++
++    if (s->rx_len >= sizeof(s->rx)) {
++        s->rx_overflow = true;
++        return -1;
++    }
++    s->rx[s->rx_len++] = data;
++    return 0;
++}
++
++static void mctp_sensor_cancel_tx(MCTPI2CSensorState *s)
++{
++    I2CPendingMaster *node, *next;
++
++    if (!s->bus) {
++        return;
++    }
++    qemu_bh_cancel(s->tx_bh);
++    QSIMPLEQ_FOREACH_SAFE(node, &s->bus->pending_masters, entry, next) {
++        if (node->bh == s->tx_bh) {
++            QSIMPLEQ_REMOVE(&s->bus->pending_masters, node,
++                           I2CPendingMaster, entry);
++            g_free(node);
++        }
++    }
++    if (s->bus->bh == s->tx_bh) {
++        i2c_end_transfer(s->bus);
++        i2c_bus_release(s->bus);
++    }
++    g_queue_clear_full(&s->tx_queue, g_free);
++    s->tx_pending = false;
++}
++
++static void mctp_sensor_reset(DeviceState *dev)
++{
++    MCTPI2CSensorState *s = MCTP_I2C_SENSOR(dev);
++
++    mctp_sensor_cancel_tx(s);
++    s->rx_len = 0;
++    s->rx_overflow = false;
++    s->eid = s->initial_eid;
++    s->tid = 1;
++    s->pdr_change_num = 1;
++}
++
++static int mctp_sensor_pre_save(void *opaque)
++{
++    MCTPI2CSensorState *s = opaque;
++
++    /* The I2C asynchronous API does not migrate pending transfers. */
++    return s->tx_pending || s->rx_len ? -EBUSY : 0;
++}
++
++static const VMStateDescription vmstate_mctp_sensor = {
++    .name = TYPE_MCTP_I2C_SENSOR,
++    .version_id = 2,
++    .minimum_version_id = 1,
++    .pre_save = mctp_sensor_pre_save,
++    .fields = (const VMStateField[]) {
++        VMSTATE_I2C_SLAVE(parent_obj, MCTPI2CSensorState),
++        VMSTATE_UINT8(eid, MCTPI2CSensorState),
++        VMSTATE_UINT8(tid, MCTPI2CSensorState),
++        VMSTATE_UINT16_V(pdr_change_num, MCTPI2CSensorState, 2),
++        VMSTATE_INT32(temperature, MCTPI2CSensorState),
++        VMSTATE_UINT8_ARRAY(uuid.data, MCTPI2CSensorState, 16),
++        VMSTATE_END_OF_LIST()
++    },
++};
++
++static void mctp_sensor_get_temperature(Object *obj, Visitor *v,
++                                       const char *name, void *opaque,
++                                       Error **errp)
++{
++    int64_t value = MCTP_I2C_SENSOR(obj)->temperature;
++
++    visit_type_int(v, name, &value, errp);
++}
++
++static void mctp_sensor_set_temperature(Object *obj, Visitor *v,
++                                       const char *name, void *opaque,
++                                       Error **errp)
++{
++    int64_t value;
++
++    if (!visit_type_int(v, name, &value, errp)) {
++        return;
++    }
++    if (value < -273150 || value > INT32_MAX) {
++        error_setg(errp, "temperature must be between -273150 and %d mC",
++                   INT32_MAX);
++        return;
++    }
++    MCTP_I2C_SENSOR(obj)->temperature = value;
++}
++
++static void mctp_sensor_realize(DeviceState *dev, Error **errp)
++{
++    MCTPI2CSensorState *s = MCTP_I2C_SENSOR(dev);
++
++    if (s->initial_eid && !mctp_sensor_valid_eid(s->initial_eid)) {
++        error_setg(errp, "initial-eid must be zero or between 8 and 254");
++        return;
++    }
++    if (s->parent_obj.address < 0x08 || s->parent_obj.address > 0x77 ||
++        s->parent_obj.address == 0x61) {
++        error_setg(errp, "address must be a non-reserved 7-bit I2C address "
++                   "other than the SMBus ARP address 0x61");
++        return;
++    }
++    if (qemu_uuid_is_null(&s->uuid)) {
++        qemu_uuid_generate(&s->uuid);
++    }
++    s->bus = I2C_BUS(qdev_get_parent_bus(dev));
++    s->tx_bh = qemu_bh_new(mctp_sensor_tx, s);
++    mctp_sensor_reset(dev);
++}
++
++static void mctp_sensor_unrealize(DeviceState *dev)
++{
++    MCTPI2CSensorState *s = MCTP_I2C_SENSOR(dev);
++
++    mctp_sensor_cancel_tx(s);
++    qemu_bh_delete(s->tx_bh);
++    s->tx_bh = NULL;
++    s->bus = NULL;
++}
++
++static void mctp_sensor_init(Object *obj)
++{
++    MCTPI2CSensorState *s = MCTP_I2C_SENSOR(obj);
++
++    s->temperature = 35000;
++    s->pdr_change_num = 1;
++    g_queue_init(&s->tx_queue);
++    object_property_add(obj, "temperature", "int",
++                        mctp_sensor_get_temperature,
++                        mctp_sensor_set_temperature, NULL, NULL);
++    object_property_add_uint8_ptr(obj, "eid", &s->eid, OBJ_PROP_FLAG_READ);
++}
++
++static const Property mctp_sensor_properties[] = {
++    DEFINE_PROP_UINT8("initial-eid", MCTPI2CSensorState, initial_eid, 0),
++    DEFINE_PROP_UUID("uuid", MCTPI2CSensorState, uuid),
++};
++
++static void mctp_sensor_class_init(ObjectClass *oc, const void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(oc);
++    I2CSlaveClass *sc = I2C_SLAVE_CLASS(oc);
++
++    dc->desc = "MCTP over I2C PLDM temperature sensor (no SMBus ARP)";
++    dc->realize = mctp_sensor_realize;
++    dc->unrealize = mctp_sensor_unrealize;
++    dc->vmsd = &vmstate_mctp_sensor;
++    device_class_set_legacy_reset(dc, mctp_sensor_reset);
++    device_class_set_props(dc, mctp_sensor_properties);
++    sc->event = mctp_sensor_event;
++    sc->send = mctp_sensor_send;
++}
++
++static const TypeInfo mctp_sensor_info = {
++    .name = TYPE_MCTP_I2C_SENSOR,
++    .parent = TYPE_I2C_SLAVE,
++    .instance_size = sizeof(MCTPI2CSensorState),
++    .instance_init = mctp_sensor_init,
++    .class_init = mctp_sensor_class_init,
++};
++
++static void mctp_sensor_register_types(void)
++{
++    type_register_static(&mctp_sensor_info);
++}
++
++type_init(mctp_sensor_register_types)
+diff --git a/hw/sensor/meson.build b/hw/sensor/meson.build
+index e0440a0ad..3188fa73d 100644
+--- a/hw/sensor/meson.build
++++ b/hw/sensor/meson.build
+@@ -10,3 +10,4 @@ system_ss.add(when: 'CONFIG_ISL_PMBUS_VR', if_true: files('isl_pmbus_vr.c'))
+ system_ss.add(when: 'CONFIG_MAX31785', if_true: files('max31785.c'))
+ system_ss.add(when: 'CONFIG_C8763', if_true: files('c8763.c'))
+ system_ss.add(when: 'CONFIG_LTC2497', if_true: files('ltc2497.c'))
++system_ss.add(when: 'CONFIG_MCTP_I2C_SENSOR', if_true: files('mctp-i2c-sensor.c'))
+diff --git a/include/hw/sensor/mctp-i2c-sensor.h b/include/hw/sensor/mctp-i2c-sensor.h
+new file mode 100644
+index 000000000..188388826
+--- /dev/null
++++ b/include/hw/sensor/mctp-i2c-sensor.h
+@@ -0,0 +1,7 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++#ifndef HW_SENSOR_MCTP_I2C_SENSOR_H
++#define HW_SENSOR_MCTP_I2C_SENSOR_H
++
++#define TYPE_MCTP_I2C_SENSOR "mctp-i2c-sensor"
++
++#endif
+diff --git a/tests/qtest/mctp-i2c-sensor-test.c b/tests/qtest/mctp-i2c-sensor-test.c
+new file mode 100644
+index 000000000..d8c418c42
+--- /dev/null
++++ b/tests/qtest/mctp-i2c-sensor-test.c
+@@ -0,0 +1,461 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++/* Exercise the DSP0237 wire format through the AST2600 I2C controller. */
++
++#include "qemu/osdep.h"
++#include "qemu/bswap.h"
++#include "hw/i2c/aspeed_i2c.h"
++#include "libqtest.h"
++#include "qobject/qdict.h"
++
++#define I2C_BASE  0x1e78a280 /* AST2600 I2C bus 4. */
++#define SENSOR_ADDR 0x1d
++#define BMC_ADDR 0x10
++#define SENSOR_PATH "/machine/peripheral/mctp-test"
++
++static uint8_t pec(const uint8_t *data, size_t len)
++{
++    uint8_t crc = 0;
++
++    while (len--) {
++        crc ^= *data++;
++        for (int bit = 0; bit < 8; bit++) {
++            crc = (crc & 0x80) ? (crc << 1) ^ 0x07 : crc << 1;
++        }
++    }
++    return crc;
++}
++
++static uint32_t read_reg(QTestState *qts, uint32_t offset)
++{
++    return qtest_readl(qts, I2C_BASE + offset);
++}
++
++static void write_reg(QTestState *qts, uint32_t offset, uint32_t value)
++{
++    qtest_writel(qts, I2C_BASE + offset, value);
++}
++
++static void wait_status(QTestState *qts, uint32_t mask)
++{
++    for (int i = 0; i < 1000; i++) {
++        if (read_reg(qts, A_I2CD_INTR_STS) & mask) {
++            return;
++        }
++        qtest_clock_step(qts, 10000);
++    }
++    g_error("I2C interrupt 0x%x did not arrive (status 0x%x)",
++            mask, read_reg(qts, A_I2CD_INTR_STS));
++}
++
++static QTestState *sensor_init(void)
++{
++    QTestState *qts = qtest_init(
++        "-machine ast2600-evb "
++        "-device mctp-i2c-sensor,bus=aspeed.i2c.bus.4,address=0x1e,"
++        "id=mctp-test,uuid=8af8149a-76ee-4aa1-b042-19a609ff1d01");
++
++    /* Test the board's sensor at 0x1d; the explicit device is for QOM tests. */
++    write_reg(qts, A_I2CD_DEV_ADDR, BMC_ADDR);
++    write_reg(qts, A_I2CD_INTR_CTRL, 0x7fff);
++    write_reg(qts, A_I2CD_FUN_CTRL, 3); /* Enable master and slave modes. */
++    return qts;
++}
++
++static void send_packet(QTestState *qts, const uint8_t *data, size_t len)
++{
++    write_reg(qts, A_I2CD_INTR_STS, 0x7fff);
++    write_reg(qts, A_I2CD_BYTE_BUF, data[0]);
++    write_reg(qts, A_I2CD_CMD, A_I2CD_M_START_CMD | A_I2CD_M_TX_CMD);
++    g_assert_false(read_reg(qts, A_I2CD_INTR_STS) & BIT(1)); /* TX_NAK */
++    for (size_t i = 1; i < len; i++) {
++        write_reg(qts, A_I2CD_INTR_STS, BIT(0));
++        write_reg(qts, A_I2CD_BYTE_BUF, data[i]);
++        write_reg(qts, A_I2CD_CMD, A_I2CD_M_TX_CMD);
++        g_assert_false(read_reg(qts, A_I2CD_INTR_STS) & BIT(1));
++    }
++    write_reg(qts, A_I2CD_INTR_STS, 0x7fff);
++    write_reg(qts, A_I2CD_CMD, A_I2CD_M_STOP_CMD);
++}
++
++static size_t receive_packet(QTestState *qts, uint8_t addr, uint8_t *data)
++{
++    size_t len = 3;
++
++    /* Slave receive includes the destination I2C address byte. */
++    for (size_t i = 0; i < len; i++) {
++        wait_status(qts, BIT(2)); /* RX_DONE */
++        data[i] = read_reg(qts, A_I2CD_BYTE_BUF) >> 8;
++        if (i == 2) {
++            len = data[2] + 4;
++            g_assert_cmpuint(len, <=, 73);
++        }
++        write_reg(qts, A_I2CD_INTR_STS, BIT(2) | BIT(4) | BIT(7));
++    }
++    wait_status(qts, BIT(4)); /* NORMAL_STOP after the PEC was acknowledged. */
++    g_assert_cmphex(data[0], ==, BMC_ADDR << 1);
++    g_assert_cmphex(data[1], ==, 0x0f);
++    g_assert_cmphex(data[3], ==, (addr << 1) | 1);
++    g_assert_cmphex(data[4], ==, 1);
++    g_assert_cmphex(data[5], ==, 8);
++    g_assert_cmphex(data[7], ==, 0xc5); /* SOM, EOM, tag 5, TO cleared. */
++    g_assert_cmphex(data[len - 1], ==, pec(data, len - 1));
++    return len;
++}
++
++static size_t request(QTestState *qts, uint8_t addr, uint8_t eid,
++                      const uint8_t *payload, size_t payload_len, uint8_t *rsp)
++{
++    uint8_t pkt[73] = {
++        addr << 1, 0x0f, 5 + payload_len, (BMC_ADDR << 1) | 1,
++        1, eid, 8, 0xcd,
++    };
++
++    memcpy(pkt + 8, payload, payload_len);
++    pkt[8 + payload_len] = pec(pkt, 8 + payload_len);
++    send_packet(qts, pkt, 9 + payload_len);
++    return receive_packet(qts, addr, rsp);
++}
++
++static void test_setup_endpoint(void)
++{
++    QTestState *qts = sensor_init();
++    uint8_t rsp[73], uuid[16];
++    const uint8_t get_eid[] = { 0, 0x83, 2 };
++    const uint8_t set_eid[] = { 0, 0x84, 1, 0, 9 };
++    const uint8_t get_types[] = { 0, 0x85, 5 };
++    const uint8_t get_uuid[] = { 0, 0x86, 3 };
++    const uint8_t get_version[] = { 0, 0x87, 4, 0xff };
++
++    /* The same sequence used by mctpd's SetupEndpoint(ay [0x1d]). */
++    g_assert_cmpuint(request(qts, SENSOR_ADDR, 0, get_eid,
++                            sizeof(get_eid), rsp), ==, 16);
++    g_assert_cmphex(rsp[6], ==, 0);
++    g_assert_cmphex(rsp[9], ==, 3);
++    g_assert_cmphex(rsp[11], ==, 0);
++    g_assert_cmphex(rsp[12], ==, 0);
++    g_assert_cmphex(rsp[13], ==, 0); /* Dynamic endpoint, not a bridge. */
++
++    request(qts, SENSOR_ADDR, 0, set_eid, sizeof(set_eid), rsp);
++    g_assert_cmphex(rsp[6], ==, 9);
++    g_assert_cmphex(rsp[11], ==, 0);
++    g_assert_cmphex(rsp[12], ==, 0); /* Accepted. */
++    g_assert_cmphex(rsp[13], ==, 9);
++    g_assert_cmphex(rsp[14], ==, 0); /* No EID pool. */
++
++    request(qts, SENSOR_ADDR, 9, get_types, sizeof(get_types), rsp);
++    g_assert_cmphex(rsp[12], ==, 2);
++    g_assert_cmphex(rsp[13], ==, 0);
++    g_assert_cmphex(rsp[14], ==, 1);
++
++    g_assert_cmpuint(request(qts, SENSOR_ADDR, 9, get_uuid,
++                            sizeof(get_uuid), rsp), ==, 29);
++    memcpy(uuid, rsp + 12, sizeof(uuid));
++    request(qts, SENSOR_ADDR, 9, get_uuid, sizeof(get_uuid), rsp);
++    g_assert_cmpmem(uuid, sizeof(uuid), rsp + 12, sizeof(uuid));
++
++    g_assert_cmpuint(request(qts, SENSOR_ADDR, 9, get_version,
++                            sizeof(get_version), rsp), ==, 18);
++    g_assert_cmphex(rsp[12], ==, 1);
++    g_assert_cmphex(rsp[13], ==, 0xf1);
++    g_assert_cmphex(rsp[14], ==, 0xf3);
++    qtest_quit(qts);
++}
++
++static void test_invalid_requests(void)
++{
++    QTestState *qts = sensor_init();
++    uint8_t rsp[73];
++    uint8_t bad_pec[] = {
++        SENSOR_ADDR << 1, 0x0f, 10, (BMC_ADDR << 1) | 1,
++        1, 0, 8, 0xcd, 0, 0x80, 1, 0, 9, 0,
++    };
++    const uint8_t get_eid[] = { 0, 0x80, 2 };
++    const uint8_t short_set[] = { 0, 0x80, 1, 0 };
++    const uint8_t invalid_eid[] = { 0, 0x80, 1, 0, 7 };
++    const uint8_t assign[] = { 0, 0x80, 1, 0, 9 };
++    const uint8_t reassign[] = { 0, 0x80, 1, 0, 10 };
++    const uint8_t force[] = { 0, 0x80, 1, 1, 10 };
++    const uint8_t reset[] = { 0, 0x80, 1, 2, 0 };
++
++    bad_pec[13] = pec(bad_pec, 13) ^ 1;
++    send_packet(qts, bad_pec, sizeof(bad_pec));
++    /* A subsequent valid request must still work, with EID unassigned. */
++    request(qts, SENSOR_ADDR, 0, get_eid, sizeof(get_eid), rsp);
++    g_assert_cmphex(rsp[12], ==, 0);
++
++    g_assert_cmpuint(request(qts, SENSOR_ADDR, 0, short_set,
++                            sizeof(short_set), rsp), ==, 13);
++    g_assert_cmphex(rsp[11], ==, 3);
++    request(qts, SENSOR_ADDR, 0, invalid_eid, sizeof(invalid_eid), rsp);
++    g_assert_cmphex(rsp[11], ==, 2);
++    g_assert_cmphex(rsp[6], ==, 0);
++
++    request(qts, SENSOR_ADDR, 0, assign, sizeof(assign), rsp);
++    request(qts, SENSOR_ADDR, 0, reassign, sizeof(reassign), rsp);
++    g_assert_cmphex(rsp[12], ==, 0x10);
++    g_assert_cmphex(rsp[13], ==, 9);
++    request(qts, SENSOR_ADDR, 0, force, sizeof(force), rsp);
++    g_assert_cmphex(rsp[12], ==, 0);
++    g_assert_cmphex(rsp[13], ==, 10);
++    request(qts, SENSOR_ADDR, 0, reset, sizeof(reset), rsp);
++    g_assert_cmphex(rsp[13], ==, 0);
++
++    /* No SMBus ARP target responds at the reserved address 0x61. */
++    write_reg(qts, A_I2CD_INTR_STS, 0x7fff);
++    write_reg(qts, A_I2CD_BYTE_BUF, 0x61 << 1);
++    write_reg(qts, A_I2CD_CMD, A_I2CD_M_START_CMD);
++    g_assert_true(read_reg(qts, A_I2CD_INTR_STS) & BIT(1));
++    qtest_quit(qts);
++}
++
++static void test_temperature(void)
++{
++    QTestState *qts = sensor_init();
++    uint8_t rsp[73];
++    const uint8_t get_reading[] = { 1, 0x80, 2, 0x11, 1, 0, 0 };
++    const uint8_t bad_sensor[] = { 1, 0x80, 2, 0x11, 2, 0, 0 };
++    QDict *reply;
++
++    g_assert_cmpuint(request(qts, SENSOR_ADDR, 0, get_reading,
++                            sizeof(get_reading), rsp), ==, 24);
++    g_assert_cmphex(rsp[12], ==, 0);
++    g_assert_cmphex(rsp[13], ==, 5);
++    g_assert_cmpint((int32_t)ldl_le_p(rsp + 19), ==, 35000);
++
++    qtest_qmp_assert_success(qts,
++        "{'execute':'qom-set','arguments':{'path':%s,"
++        "'property':'temperature','value':-12500}}", SENSOR_PATH);
++    reply = qtest_qmp(qts,
++        "{'execute':'qom-get','arguments':{'path':%s,"
++        "'property':'temperature'}}", SENSOR_PATH);
++    g_assert_true(qdict_haskey(reply, "return"));
++    g_assert_cmpint(qdict_get_int(reply, "return"), ==, -12500);
++    qobject_unref(reply);
++    request(qts, 0x1e, 0, get_reading, sizeof(get_reading), rsp);
++    g_assert_cmpint((int32_t)ldl_le_p(rsp + 19), ==, -12500);
++
++    reply = qtest_qmp_assert_failure_ref(qts,
++        "{'execute':'qom-set','arguments':{'path':%s,"
++        "'property':'temperature','value':-273151}}", SENSOR_PATH);
++    qobject_unref(reply);
++    request(qts, 0x1e, 0, get_reading, sizeof(get_reading), rsp);
++    g_assert_cmpint((int32_t)ldl_le_p(rsp + 19), ==, -12500);
++    request(qts, SENSOR_ADDR, 0, bad_sensor, sizeof(bad_sensor), rsp);
++    g_assert_cmphex(rsp[12], ==, 0x80);
++    qtest_quit(qts);
++}
++
++/* Fetch a PDR through the same multipart protocol used by OpenBMC pldmd. */
++static size_t fetch_pdr(QTestState *qts, uint32_t record, uint16_t count,
++                        uint8_t *data, uint32_t *next_record)
++{
++    uint8_t req[17] = { 1, 0x80, 2, 0x51 };
++    uint8_t rsp[73];
++    uint32_t transfer = 0;
++    uint16_t change = 0;
++    size_t total = 0;
++
++    stl_le_p(req + 4, record);
++    stw_le_p(req + 13, count);
++    for (unsigned int part = 0; part < 32; part++) {
++        size_t packet_len;
++        uint16_t received;
++        uint8_t flag;
++
++        stl_le_p(req + 8, transfer);
++        req[12] = part ? 0 : 1; /* GetNextPart / GetFirstPart */
++        stw_le_p(req + 15, change);
++        packet_len = request(qts, SENSOR_ADDR, 9, req, sizeof(req), rsp);
++        g_assert_cmphex(rsp[12], ==, 0);
++        transfer = ldl_le_p(rsp + 17);
++        flag = rsp[21];
++        received = lduw_le_p(rsp + 22);
++        g_assert_cmpuint(received, >, 0);
++        g_assert_cmpuint(received, <=, count);
++        g_assert_cmpuint(total + received, <=, 256);
++        g_assert_cmpuint(packet_len, ==,
++                         25 + received + (flag == 4));
++        g_assert_cmphex(flag, ==,
++                       part ? (transfer ? 1 : 4) : (transfer ? 0 : 5));
++        memcpy(data + total, rsp + 24, received);
++        total += received;
++        if (!part) {
++            g_assert_cmpuint(received, >=, 10);
++            change = lduw_le_p(data + 6);
++        }
++        if (!transfer) {
++            if (flag == 4) {
++                g_assert_cmphex(rsp[24 + received], ==, pec(data, total));
++            }
++            g_assert_cmpuint(total, ==, 10 + lduw_le_p(data + 8));
++            *next_record = ldl_le_p(rsp + 13);
++            return total;
++        }
++    }
++    g_error("GetPDR multipart transfer did not complete");
++}
++
++static void test_pdr_discovery(void)
++{
++    QTestState *qts = sensor_init();
++    const uint8_t assign[] = { 0, 0x80, 1, 0, 9 };
++    const uint8_t set_tid[] = { 1, 0x80, 0, 1, 7 };
++    const uint8_t get_commands[] = { 1, 0x80, 0, 5, 2, 0, 0xf0, 0xf0, 0xf1 };
++    const uint8_t get_info[] = { 1, 0x80, 2, 0x50 };
++    uint8_t rsp[73], pdr[256], numeric[256];
++    uint32_t record = 0, next, repository_size, largest_record;
++    size_t total = 0, numeric_len = 0, largest = 0;
++    unsigned int records = 0;
++
++    request(qts, SENSOR_ADDR, 0, assign, sizeof(assign), rsp);
++    request(qts, SENSOR_ADDR, 9, set_tid, sizeof(set_tid), rsp);
++    request(qts, SENSOR_ADDR, 9, get_commands, sizeof(get_commands), rsp);
++    g_assert_cmphex(rsp[12], ==, 0);
++    g_assert_true(rsp[15] & BIT(1)); /* GetSensorReading */
++    g_assert_cmphex(rsp[23] & 3, ==, 3); /* GetPDRRepositoryInfo and GetPDR */
++    g_assert_cmpuint(request(qts, SENSOR_ADDR, 9, get_info,
++                            sizeof(get_info), rsp), ==, 54);
++    g_assert_cmphex(rsp[12], ==, 0);
++    g_assert_cmphex(rsp[13], ==, 0); /* Repository available */
++    g_assert_cmpuint(ldl_le_p(rsp + 40), ==, 4);
++    repository_size = ldl_le_p(rsp + 44);
++    largest_record = ldl_le_p(rsp + 48);
++
++    do {
++        size_t len = fetch_pdr(qts, record, UINT16_MAX, pdr, &next);
++
++        total += len;
++        largest = MAX(largest, len);
++        records++;
++        g_assert_cmpuint(records, <=, 4);
++        switch (pdr[5]) {
++        case 1: /* Terminus Locator: reflects assigned EID and PLDM TID. */
++            g_assert_cmphex(pdr[12], ==, 1);
++            g_assert_cmphex(pdr[13], ==, 7);
++            g_assert_cmphex(pdr[18], ==, 9);
++            break;
++        case 2: /* Numeric Sensor: signed milli-degrees Celsius. */
++            g_assert_cmpuint(lduw_le_p(pdr + 12), ==, 1);
++            g_assert_cmphex(pdr[21], ==, 1);
++            g_assert_cmphex(pdr[22], ==, 2);
++            g_assert_cmpint((int8_t)pdr[23], ==, -3);
++            g_assert_cmphex(pdr[32], ==, 5);
++            g_assert_cmphex(ldl_le_p(pdr + 33), ==, 0x3f800000);
++            g_assert_cmpint((int32_t)ldl_le_p(pdr + 59), ==, 128000);
++            g_assert_cmpint((int32_t)ldl_le_p(pdr + 63), ==, -127000);
++            numeric_len = len;
++            memcpy(numeric, pdr, len);
++            break;
++        case 6: /* Sensor name is a terminated UTF-16BE string. */
++            g_assert_cmpuint(lduw_le_p(pdr + 12), ==, 1);
++            g_assert_cmpmem(pdr + 16, 3, "en", 3);
++            g_assert_cmpmem(pdr + 19, 24,
++                           "\0T\0e\0m\0p\0e\0r\0a\0t\0u\0r\0e\0", 24);
++            break;
++        case 16: /* The root entity name gives pldmd a valid D-Bus path. */
++            g_assert_cmpuint(lduw_le_p(pdr + 14), ==, 0);
++            g_assert_cmpmem(pdr + 18, 3, "en", 3);
++            g_assert_cmpmem(pdr + 21, 26,
++                           "\0Q\0E\0M\0U\0_\0M\0C\0T\0P\0_\0" "1\0d\0", 26);
++            break;
++        default:
++            g_assert_not_reached();
++        }
++        record = next;
++    } while (record);
++    g_assert_cmpuint(records, ==, 4);
++    g_assert_cmpuint(total, ==, repository_size);
++    g_assert_cmpuint(largest, ==, largest_record);
++    g_assert_cmpuint(numeric_len, >, 47);
++
++    /* Small requester buffers exercise intermediate parts and final CRC. */
++    g_assert_cmpuint(fetch_pdr(qts, 2, 13, pdr, &next), ==, numeric_len);
++    g_assert_cmpmem(pdr, numeric_len, numeric, numeric_len);
++    g_assert_cmpuint(next, ==, 3);
++    qtest_quit(qts);
++}
++
++static void test_pdr_invalid_requests(void)
++{
++    QTestState *qts = sensor_init();
++    const uint8_t assign[] = { 0, 0x80, 1, 0, 9 };
++    const uint8_t set_tid[] = { 1, 0x80, 0, 1, 2 };
++    const uint8_t long_info[] = { 1, 0x80, 2, 0x50, 0 };
++    uint8_t req[17] = { 1, 0x80, 2, 0x51 };
++    uint8_t rsp[73];
++    uint32_t transfer;
++    uint16_t change;
++
++    request(qts, SENSOR_ADDR, 0, assign, sizeof(assign), rsp);
++    req[12] = 1;
++    stw_le_p(req + 13, UINT16_MAX);
++    request(qts, SENSOR_ADDR, 9, req, sizeof(req) - 1, rsp);
++    g_assert_cmphex(rsp[12], ==, 3);
++    request(qts, SENSOR_ADDR, 9, long_info, sizeof(long_info), rsp);
++    g_assert_cmphex(rsp[12], ==, 3);
++
++    stl_le_p(req + 4, 99);
++    request(qts, SENSOR_ADDR, 9, req, sizeof(req), rsp);
++    g_assert_cmphex(rsp[12], ==, 0x82);
++    stl_le_p(req + 4, 2);
++    req[12] = 2;
++    request(qts, SENSOR_ADDR, 9, req, sizeof(req), rsp);
++    g_assert_cmphex(rsp[12], ==, 0x81);
++    req[12] = 1;
++    stl_le_p(req + 8, 1);
++    request(qts, SENSOR_ADDR, 9, req, sizeof(req), rsp);
++    g_assert_cmphex(rsp[12], ==, 0x80);
++
++    stl_le_p(req + 8, 0);
++    request(qts, SENSOR_ADDR, 9, req, sizeof(req), rsp);
++    g_assert_cmphex(rsp[12], ==, 0);
++    g_assert_cmphex(rsp[21], ==, 0); /* Start of a multipart Numeric PDR */
++    transfer = ldl_le_p(rsp + 17);
++    change = lduw_le_p(rsp + 30);
++    req[12] = 0;
++    stl_le_p(req + 8, transfer);
++    stw_le_p(req + 15, change + 1);
++    request(qts, SENSOR_ADDR, 9, req, sizeof(req), rsp);
++    g_assert_cmphex(rsp[12], ==, 0x83);
++
++    stw_le_p(req + 15, change);
++    stl_le_p(req + 4, 3); /* A continuation cannot be reused for another PDR. */
++    request(qts, SENSOR_ADDR, 9, req, sizeof(req), rsp);
++    g_assert_cmphex(rsp[12], ==, 0x80);
++    stl_le_p(req + 4, 2);
++    stl_le_p(req + 8, (transfer & ~0xffU) | 0xff);
++    request(qts, SENSOR_ADDR, 9, req, sizeof(req), rsp);
++    g_assert_cmphex(rsp[12], ==, 0x80);
++
++    /* Changing the locator invalidates an in-progress repository generation. */
++    stl_le_p(req + 8, transfer);
++    request(qts, SENSOR_ADDR, 9, set_tid, sizeof(set_tid), rsp);
++    request(qts, SENSOR_ADDR, 9, req, sizeof(req), rsp);
++    g_assert_cmphex(rsp[12], ==, 0x83);
++
++    /* A zero requestCount is legal and returns no record bytes. */
++    stl_le_p(req + 4, 0);
++    stl_le_p(req + 8, 0);
++    req[12] = 1;
++    stw_le_p(req + 13, 0);
++    stw_le_p(req + 15, 0);
++    g_assert_cmpuint(request(qts, SENSOR_ADDR, 9, req,
++                            sizeof(req), rsp), ==, 25);
++    g_assert_cmphex(rsp[12], ==, 0);
++    g_assert_cmphex(rsp[21], ==, 5);
++    g_assert_cmpuint(lduw_le_p(rsp + 22), ==, 0);
++    g_assert_cmpuint(ldl_le_p(rsp + 17), ==, 0);
++    qtest_quit(qts);
++}
++
++int main(int argc, char **argv)
++{
++    g_test_init(&argc, &argv, NULL);
++    qtest_add_func("/mctp-i2c-sensor/setup-endpoint", test_setup_endpoint);
++    qtest_add_func("/mctp-i2c-sensor/invalid-requests", test_invalid_requests);
++    qtest_add_func("/mctp-i2c-sensor/temperature", test_temperature);
++    qtest_add_func("/mctp-i2c-sensor/pdr-discovery", test_pdr_discovery);
++    qtest_add_func("/mctp-i2c-sensor/pdr-invalid-requests",
++                   test_pdr_invalid_requests);
++    return g_test_run();
++}
+diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
+index be4fa627b..aab054de4 100644
+--- a/tests/qtest/meson.build
++++ b/tests/qtest/meson.build
+@@ -239,6 +239,8 @@ qtests_arm = \
+   (config_all_devices.has_key('CONFIG_PFLASH_CFI02') and
+    config_all_devices.has_key('CONFIG_MUSICPAL') ? ['pflash-cfi02-test'] : []) + \
+   (config_all_devices.has_key('CONFIG_ASPEED_SOC') ? qtests_aspeed : []) + \
++  (config_all_devices.has_key('CONFIG_ASPEED_SOC') and
++   config_all_devices.has_key('CONFIG_MCTP_I2C_SENSOR') ? ['mctp-i2c-sensor-test'] : []) + \
+   (config_all_devices.has_key('CONFIG_NPCM7XX') ? qtests_npcm7xx : []) + \
+   (config_all_devices.has_key('CONFIG_GENERIC_LOADER') ? ['hexloader-test'] : []) + \
+   (config_all_devices.has_key('CONFIG_TPM_TIS_I2C') ? ['tpm-tis-i2c-test'] : []) + \

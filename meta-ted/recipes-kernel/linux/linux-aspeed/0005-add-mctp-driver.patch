@@ -1,0 +1,37 @@
+From 5db32e608f49fd8ca496f8709c0674fad09aeb59 Mon Sep 17 00:00:00 2001
+From: ted <wii03903975@gmail.com>
+Date: Tue, 3 Nov 2026 16:58:10 +0800
+Subject: [PATCH] add mctp driver
+
+Upstream-Status: Inappropriate [local OpenBMC test configuration]
+
+---
+ arch/arm/boot/dts/aspeed/aspeed-ast2600-evb.dts | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/arch/arm/boot/dts/aspeed/aspeed-ast2600-evb.dts b/arch/arm/boot/dts/aspeed/aspeed-ast2600-evb.dts
+index 0c148b691d4e..02aeb4f9e71b 100644
+--- a/arch/arm/boot/dts/aspeed/aspeed-ast2600-evb.dts
++++ b/arch/arm/boot/dts/aspeed/aspeed-ast2600-evb.dts
+@@ -5,6 +5,7 @@
+ 
+ #include "aspeed-g6.dtsi"
+ #include <dt-bindings/gpio/aspeed-gpio.h>
++#include <dt-bindings/i2c/i2c.h>
+ 
+ / {
+ 	model = "AST2600 EVB";
+@@ -242,6 +243,13 @@ &i2c3 {
+ 
+ &i2c4 {
+ 	status = "okay";
++	multi-master;
++	mctp-controller;
++
++	mctp@10 {
++		compatible = "mctp-i2c-controller";
++		reg = <(0x10 | I2C_OWN_SLAVE_ADDRESS)>;
++	};
+ };
+ 
+ &i2c5 {
